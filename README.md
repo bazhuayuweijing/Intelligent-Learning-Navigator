@@ -84,8 +84,7 @@ flowchart LR
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/<your-username>/zhixue-linghang.git
-cd zhixue-linghang
+https://github.com/bazuayuweijing/Intelligent-Learning-Navigator.git
 
 # 2. 创建虚拟环境并安装依赖
 python -m venv venv
