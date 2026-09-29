@@ -1,0 +1,1843 @@
+"""
+多智能体资源生成系统
+6+1个专业Agent协同工作，生成多模态个性化学习资源
+
+Agent架构:
+  Coordinator → 理解需求 → 分发到专业Agent → 整合返回
+    ├── DocAgent            → 课程讲解文档
+    ├── MindMapAgent        → 知识思维导图 (Mermaid)
+    ├── QuizAgent           → 多样化练习题库
+    ├── CaseAgent           → 实操案例/代码
+    ├── ResourceRecommenderAgent → 视频/书籍/论文推荐
+    └── TrapExamGenerator   → 认知弱点克星题
+"""
+import json, random
+from datetime import datetime
+
+
+class BaseGeneratorAgent:
+    """所有生成Agent的基类"""
+    name = "base"
+    description = ""
+
+    def generate(self, context: dict) -> dict:
+        raise NotImplementedError
+
+
+# ===== Agent: 课程文档生成 =====
+class DocAgent(BaseGeneratorAgent):
+    name = "document"
+    description = "生成专业课程讲解文档"
+
+    def generate(self, context: dict) -> dict:
+        subject = context.get("subject", "computer_science")
+        subject_name = context.get("subject_name", subject)
+        level = context.get("level", 1)
+        topic = context.get("topic", subject_name)
+        weak_points = context.get("weak_points", [])
+        learning_goal = context.get("learning_goal", f"系统学习{subject_name}")
+
+        level_names = {1: "基础入门", 2: "中等进阶", 3: "高级深化", 4: "大神专题"}
+        level_name = level_names.get(level, "基础入门")
+
+        # ===== 个性化画像感知调整 =====
+        profile = context.get("student_profile", {})
+        if profile.get("has_profile"):
+            dim_scores = profile.get("dimension_scores", {})
+            cognitive_style = profile.get("cognitive_style", "综合型")
+            profile_weak_points = profile.get("weak_points", [])
+            
+            # 根据认知风格调整文档风格
+            if cognitive_style in ("实践驱动型", "视听学习型"):
+                learning_goal = f"{learning_goal}（多提供实际案例和可操作步骤）"
+                # 追加实践导向的文档要求
+                context["_style_hint"] = "实践导向。多用具体代码/案例展示，每节必跟至少一个实际应用场景。少大段理论推导，多操作步骤和效果截图描述。"
+            elif cognitive_style == "系统理论型":
+                context["_style_hint"] = "理论导向。强调概念的定义、分类和内在逻辑关系。用类比帮助理解抽象概念，提供完整知识框架和术语表。"
+            elif cognitive_style == "阅读自学型":
+                context["_style_hint"] = "自学导向。结构清晰层次分明，每节含学习目标和自测问题。提供扩展阅读指引以备深入。"
+            
+            # 根据薄弱维度重点强化对应内容
+            if "application" in profile_weak_points:
+                context["_weakness_focus"] = "application"
+                learning_goal = f"{learning_goal}（重点加强实践应用能力训练）"
+            elif "understanding" in profile_weak_points:
+                context["_weakness_focus"] = "understanding"
+                learning_goal = f"{learning_goal}（重点加强概念理解和深度分析）"
+
+        return {
+            "type": "document",
+            "title": f"《{subject_name}·{topic}》{level_name}讲解",
+            "format": "markdown",
+            "generated_at": datetime.utcnow().isoformat(),
+            "content": self._build_doc(subject_name, topic, level_name, weak_points, learning_goal, subject, context),
+            "metadata": {
+                "subject": subject,
+                "level": level,
+                "topic": topic,
+                "recommended_duration": f"{random.randint(2,6)}小时",
+                "difficulty": level_name
+            }
+        }
+
+    def _build_doc(self, subject_name, topic, level, weak_points, goal, subject_key=None, context=None):
+        """构建文档内容（LLM优先，失败回退增强模板）"""
+        context = context or {}
+        try:
+            from utils import call_llm, call_llm_json
+            try:
+                from knowledge_base import kb
+                kb_key = subject_key.lower().replace(' ', '_') if subject_key else subject_name.lower().replace(' ', '_')
+                kb_context = kb.get_context(query=f"{subject_name} {topic} {goal}", subject=kb_key)
+            except Exception:
+                kb_context = ""
+            base_prompt = "你是一名专业的课程设计老师。请根据学科、主题和学生水平生成一份有价值的Markdown学习文档，内容要具体不空泛。语言为中文。"
+            sys_prompt = base_prompt + ("\n\n" + kb_context if kb_context else "")
+            
+            # 注入个性化风格说明
+            style_hint = context.get("_style_hint", "")
+            weakness_focus = context.get("_weakness_focus", "")
+            profile = context.get("student_profile", {})
+            
+            content_instructions = [
+                "1. 核心概念讲解（含定义、前置知识要求、为什么这个概念重要）",
+                "2. 知识点精讲（3-4个小节，每节含具体示例或类比）",
+                "3. 常见误区分析（针对薄弱点，给出具体纠偏建议和对比表）",
+                "4. 阶段学习路线图（分3个阶段，每个阶段配具体动作）",
+                "5. 重点总结（5条核心Takeaway）",
+            ]
+            
+            # 根据薄弱维度调整内容结构
+            if weakness_focus == "application":
+                content_instructions.insert(2, "- 每个知识点必须紧跟一个实际应用案例或代码片段")
+                content_instructions.insert(3, "- 增加「动手练习」环节，每节至少1道实践题")
+            elif weakness_focus == "understanding":
+                content_instructions.insert(2, "- 每个概念必须配类比说明，避免纯定义堆砌")
+                content_instructions.insert(3, "- 增加概念对比表，突出易混淆点区分")
+            
+            # 根据学习风格调整文档结构
+            if profile.get("has_profile"):
+                dim_scores = profile.get("dimension_scores", {})
+                if dim_scores.get("application", 50) < 40:
+                    content_instructions.append("- 增加「一图流」概念图示描述（文字版），帮助建立直观印象")
+                if dim_scores.get("creativity", 50) < 40:
+                    content_instructions.append("- 增加开放思考题，鼓励学生跳出框框思考")
+            
+            user_prompt = (
+                f"学科：{subject_name}\n"
+                f"主题：{topic}\n"
+                f"学生水平：{level}\n"
+                f"学习目标：{goal}\n"
+                f"薄弱点：{weak_points}\n"
+                f"风格说明：{style_hint}\n"
+                "\n"
+                "请包含以下内容：\n"
+                + "\n".join(content_instructions) + "\n"
+                f"难度适配{level}水平，长度中等（5-10分钟阅读量）。"
+            )
+            llm_result = call_llm(sys_prompt, user_prompt)
+            if llm_result and len(llm_result) > 300:
+                return llm_result
+        except Exception as e:
+            print(f"[DocAgent] LLM失败，使用增强模板: {e}")
+
+        # --- 增强的回退模板（不再是简陋的骨架，而是特征完整的文档） ---
+        weak_section = ""
+        if weak_points:
+            weak_section = "\n".join(f"- ❌ {w}" for w in weak_points[:3])
+            weak_section = f"\n### 常见误区与纠偏\n针对以下薄弱环节，逐一给出纠正建议：\n{weak_section}\n"
+
+        return f"""# {topic} - {level}学习指南
+
+> 学习目标：{goal}
+> 难度等级：{level}
+> 建议用时：{random.randint(2,5)}小时
+
+---
+
+## 一、为什么学{topic}？
+
+在{subject_name}领域中，{topic}处于核心地位。理解{topic}能够帮助你：
+- 建立{subject_name}的知识骨架，后续所有进阶内容都建立在此之上
+- 掌握{subject_name}领域通用的分析框架和思维方式
+- 为实际项目中的{subject_name}应用打下坚实的基础
+
+**前置知识要求**：{subject_name}的基本术语和概念，建议先花10分钟温习基础术语。
+
+---
+
+## 二、核心概念精讲
+
+### 2.1 什么是{topic}
+
+{topic}是{subject_name}中用于描述和分析特定现象/问题的理论框架和方法论集合。它的核心思想可以概括为：通过系统化的方法，将复杂问题分解为可管理的模块，然后逐一攻克。
+
+**类比帮助理解：** 就像盖房子，{topic}提供的是设计蓝图和施工规范——你不需要从零开始想每个细节，而是按照成熟的框架来执行。
+
+### 2.2 {topic}的核心要素
+
+1. **第一性原理**：从最基本的事实和规律出发，不依赖类比或既有结论
+2. **模块化思维**：将大问题拆解为独立的小问题，降低复杂度
+3. **迭代验证**：不追求一次性完美，而是快速建雏形、测试、改进
+
+### 2.3 {topic}与传统方法的区别
+
+| 维度 | 传统方式 | {topic}方式 |
+|------|---------|------------|
+| 思维方式 | 经验驱动 | 原理驱动 |
+| 问题解决 | 线性流程 | 迭代循环 |
+| 适应性 | 固定的 | 动态调整 |
+| 复杂度处理 | 简单化 | 分解控制 |
+
+---
+
+## 三、{level}核心知识点
+
+### 基础知识层
+- 理解{topic}的基本定义和适用范围
+- 掌握核心概念之间的关系
+- 能用自己的话复述主要内容
+
+### 进阶理解层
+- 分析{topic}在实际场景中的具体应用
+- 对比{topic}与其他相关理论框架的异同
+- 识别{topic}的适用边界和局限{weak_section}
+
+### 实践应用层
+- 在小型项目中实践{topic}的核心方法
+- 记录实践中的问题和反思
+- 逐步建立自己的{topic}知识体系
+
+---
+
+## 四、阶段性学习路线
+
+### 阶段一：建立基础（第1-2天）
+- 通读本文档，标记不理解的地方
+- 查找{subject_name}基础术语，补齐前置知识
+- 尝试用自己的话总结3个核心概念
+
+### 阶段二：深化理解（第3-5天）
+- 针对每个核心概念，找2-3个实际案例对照
+- 完成配套练习题（建议先做选择题，再做简答题）
+- 绘制{topic}知识点思维导图，检查知识盲区
+
+### 阶段三：综合应用（第1-2周）
+- 完成一个与{topic}相关的小项目
+- 将所学内容整理为笔记/博客
+- 尝试向他人讲解{topic}核心内容（费曼学习法）
+
+---
+
+## 五、重点总结
+
+1. **{topic}**的核心在于**将复杂问题分解为可控模块**的系统化方法
+2. 理解{topic}的前提是掌握{subject_name}基础概念——不要跳过前置知识
+3. 学习的重点是**应用而不是记忆**，多做练习比多读文档有效
+4. 遇到不懂的概念时，先用类比理解本质，再深究细节
+5. 持续把新知识和已有知识连接起来，形成知识网络而非孤立点
+"""
+
+
+class MindMapAgent(BaseGeneratorAgent):
+    name = "mindmap"
+    description = "生成知识思维导图"
+
+    def generate(self, context: dict) -> dict:
+        subject = context.get("subject", "computer_science")
+        subject_name = context.get("subject_name", subject)
+        level = context.get("level", 1)
+        topic = context.get("topic", subject_name)
+        weak_points = context.get("weak_points", [])
+
+        # ===== 个性化画像感知调整 =====
+        profile = context.get("student_profile", {})
+        if profile.get("has_profile"):
+            cognitive_style = profile.get("cognitive_style", "综合型")
+            profile_weak = profile.get("weak_points", [])
+            if "analysis" in profile_weak or "understanding" in profile_weak:
+                context["_mindmap_depth"] = 3  # 细化到三级节点
+            elif cognitive_style == "系统理论型":
+                context["_mindmap_depth"] = 3
+            else:
+                context["_mindmap_depth"] = 2
+
+        return {
+            "type": "mindmap",
+            "title": f"{subject_name}·{topic}知识导图",
+            "format": "mermaid",
+            "generated_at": datetime.utcnow().isoformat(),
+            "mermaid": self._build_mermaid(subject_name, topic, level),
+            "outline": self._build_outline(subject_name, topic, level),
+            "metadata": {
+                "subject": subject,
+                "level": level,
+                "topic": topic
+            }
+        }
+
+    def _build_mermaid(self, subject_name, topic, level):
+        try:
+            from utils import call_llm, call_llm_json
+            sys_prompt = "你是一个知识图谱专家，只输出Mermaid代码，不要额外文字。"
+            user_prompt = f"""为{topic}课程设计一个Mermaid graph TD格式知识导图。
+学科：{subject_name}，难度等级：{level}/4。
+根节点叫"{topic}知识体系"，
+一级分支：基础概念、核心原理、实践应用、进阶拓展。
+每个一级分支下至少3个子节点，子节点名用中文具体内容，不写占位符。
+仅输出Mermaid代码，不加```包裹。
+"""
+            llm_result = call_llm(sys_prompt, user_prompt)
+            if llm_result and "graph" in llm_result.lower():
+                return llm_result.strip().lstrip("```mermaid").rstrip("```").strip()
+        except Exception as e:
+            print(f"[MindMapAgent] LLM失败: {e}")
+        return self._default_mermaid(topic)
+
+    @staticmethod
+    def _default_mermaid(topic):
+        return f"""graph TD
+    A["{topic}知识体系"] --> B["基础概念"]
+    A --> C["核心原理"]
+    A --> D["实践应用"]
+    A --> E["进阶拓展"]
+    B --> B1["定义与本质"]
+    B --> B2["发展历程"]
+    B --> B3["相关术语"]
+    C --> C1["基本原理"]
+    C --> C2["核心算法"]
+    C --> C3["数学模型"]
+    D --> D1["入门示例"]
+    D --> D2["典型应用"]
+    D --> D3["项目实战"]
+    E --> E1["前沿发展"]
+    E --> E2["深入研究"]
+    E --> E3["跨领域联系"]
+"""
+
+    def _build_outline(self, subject, topic, level):
+        return [
+            {"title": "基础概念", "items": ["定义与本质", "发展历程", "相关术语"]},
+            {"title": "核心原理", "items": ["基本原理", "核心算法", "数学模型", "关键公式"]},
+            {"title": "实践应用", "items": ["入门示例", "典型应用", "项目实战", "最佳实践"]},
+            {"title": "进阶拓展", "items": ["前沿发展", "深入研究", "跨领域联系"]},
+        ]
+
+
+class QuizAgent(BaseGeneratorAgent):
+    name = "quiz"
+    description = "生成多样化练习题"
+
+    def generate(self, context: dict) -> dict:
+        subject = context.get("subject", "computer_science")
+        subject_name = context.get("subject_name", subject)
+        level = context.get("level", 1)
+        topic = context.get("topic", subject_name)
+        count = context.get("question_count", 6)
+
+        # ===== 个性化画像感知调整 =====
+        profile = context.get("student_profile", {})
+        question_focus = "balanced"
+        if profile.get("has_profile"):
+            profile_weak = profile.get("weak_points", [])
+            dim_scores = profile.get("dimension_scores", {})
+            if "application" in profile_weak or dim_scores.get("application", 50) < 40:
+                question_focus = "scenario"  # 多出应用题
+            elif "understanding" in profile_weak or dim_scores.get("understanding", 50) < 40:
+                question_focus = "concept"   # 多出概念辨析题
+            elif "analysis" in profile_weak:
+                question_focus = "compare"   # 多出对比分析题
+            context["_question_focus"] = question_focus
+
+        return {
+            "type": "quiz",
+            "title": f"{subject_name}·{topic}配套练习题",
+            "format": "json",
+            "generated_at": datetime.utcnow().isoformat(),
+            "questions": self._generate_questions(subject_name, topic, level, count, context),
+            "metadata": {
+                "subject": subject,
+                "level": level,
+                "topic": topic,
+                "total_questions": count,
+                "question_types": ["选择题", "填空题", "简答题", "编程题"],
+                "question_focus": question_focus
+            }
+        }
+
+    def _generate_questions(self, subject_name, topic, level, count, context=None):
+        context = context or {}
+        questions = []
+        question_focus = context.get("_question_focus", "balanced")
+        types_pool = [
+            {"type": "choice", "label": "选择题"},
+            {"type": "fill", "label": "填空题"},
+            {"type": "short_answer", "label": "简答题"},
+            {"type": "code", "label": "编程题"},
+        ]
+        
+        # 根据题型聚焦调整题目类型分布
+        if question_focus == "scenario":
+            # 增加应用题和情景题占比
+            types_pool = [
+                {"type": "short_answer", "label": "情景应用题"},
+                {"type": "choice", "label": "选择题"},
+                {"type": "code", "label": "编程测试题"},
+                {"type": "short_answer", "label": "情景应用题"},
+            ]
+        elif question_focus == "concept":
+            types_pool = [
+                {"type": "choice", "label": "概念选择题"},
+                {"type": "short_answer", "label": "概念辨析题"},
+                {"type": "fill", "label": "关键概念题"},
+                {"type": "choice", "label": "概念选择题"},
+            ]
+        elif question_focus == "compare":
+            types_pool = [
+                {"type": "short_answer", "label": "对比分析题"},
+                {"type": "choice", "label": "技术选型题"},
+                {"type": "short_answer", "label": "对比分析题"},
+                {"type": "fill", "label": "特性比较题"},
+            ]
+
+        for i in range(count):
+            q_type = types_pool[i % len(types_pool)]["type"]
+            q = self._make_question(subject_name, topic, level, q_type, i+1, context)
+            questions.append(q)
+
+        return questions
+
+    def _make_question(self, subject_name, topic, level, q_type, idx, context=None):
+        """生成单个题目（LLM优先，失败回退）"""
+        context = context or {}
+        type_names = {"choice": "选择题", "fill": "填空题", "short_answer": "简答题", "code": "编程题"}
+        type_name = type_names.get(q_type, "选择题")
+        
+        # 注入个性化出题方向
+        question_focus = context.get("_question_focus", "balanced")
+        focus_hints = {
+            "scenario": "重点考察实际应用能力。选择题和简答题应设置真实场景（如项目中的实际决策、调试场景）。",
+            "concept": "重点考察概念理解深度。多出概念辨析、定义解释类题目，干扰项要贴近易混淆概念。",
+            "compare": "重点考察分析评价能力。多出技术对比、方案评估、优缺点分析类题目。",
+            "balanced": ""
+        }
+        focus_hint = focus_hints.get(question_focus, "")
+        
+        try:
+            from utils import call_llm, call_llm_json
+            sys_prompt = f"你是一个{subject_name}学科的出题老师，生成高质量{type_name}。"
+            user_prompt = (
+                f"学科：{subject_name}\n"
+                f"主题：{topic}\n"
+                f"难度：{level}/4级\n"
+                f"题型：{type_name}\n"
+                f"出题方向：{focus_hint}\n\n"
+                "如果是选择题：返回JSON {{\"id\": int, \"question\": \"题干（语义完整的具体问题）\", \"options\": [\"A. \", \"B. \", \"C. \", \"D. \"], \"answer\": 0-3}}\n"
+                "如果是填空题：返回JSON {{\"id\": int, \"question\": \"题干（用___表示填空位置）\", \"answer\": \"答案\"}}\n"
+                "如果是简答题：返回JSON {{\"id\": int, \"question\": \"题干\", \"answer\": \"参考答案要点\"}}\n"
+                "如果是编程题：返回JSON {{\"id\": int, \"question\": \"题干\", \"starter_code\": \"初始代码\", \"answer\": \"参考实现\"}}\n"
+                "只输出JSON，不要其他文字。"
+            )
+            parsed = call_llm_json(sys_prompt, user_prompt, agent_name='QuizAgent')
+            if parsed:
+                parsed["type"] = q_type
+                parsed["subject"] = subject_name
+                parsed["topic"] = topic
+                parsed["difficulty"] = level
+                return parsed
+        except Exception as e:
+            print(f"[QuizAgent] LLM出题失败: {e}")
+
+        # --- 增强的回退题库 ---
+        fallback_questions = {
+            "choice": {
+                "question": f"关于{topic}，以下哪个选项最准确地描述了核心概念？",
+                "options": [
+                    f"A. {topic}是{subject_name}中用于描述和解决问题的系统性方法论",
+                    f"B. {topic}等同于{subject_name}的全部内容",
+                    f"C. {topic}和{subject_name}没有关系",
+                    f"D. {topic}只在特定场景下有意义，通用性不强"
+                ],
+                "answer": 0
+            },
+            "fill": {
+                "question": f"{topic}的核心思想可以概括为：通过_______的方法，将复杂问题分解为可控模块。",
+                "answer": "系统化"
+            },
+            "short_answer": {
+                "question": f"请简述{topic}在{subject_name}领域中的三个主要应用场景，并各举一个具体例子。",
+                "answer": f"1. 在教育场景中，{topic}用于个性化学习路径规划（如根据学生画像推荐学习资源）\n2. 在科研场景中，{topic}用于实验设计和数据分析\n3. 在工业场景中，{topic}用于流程优化和自动化"
+            },
+            "code": {
+                "question": f"请编写一个简单的Python函数，实现{topic}相关的基础功能（如数据分析和可视化）。",
+                "starter_code": f"# 请在此处编写与{topic}相关的代码\ndef analyze_{topic.lower().replace(' ', '_')}(data):\n    pass",
+                "answer": "def analyze_{}(data):\n    results = dict()\n    results['count'] = len(data)\n    results['mean'] = sum(data) / len(data) if data else 0\n    results['summary'] = '共' + str(len(data)) + '条记录'\n    return results".format(topic.lower().replace(' ', '_'))
+            }
+        }
+
+        fb = fallback_questions.get(q_type, fallback_questions["choice"])
+        return {"id": idx, "type": q_type, "difficulty": level, "subject": subject_name, "topic": topic, **fb}
+
+
+class CaseAgent(BaseGeneratorAgent):
+    name = "case"
+    description = "生成实操案例和项目练习"
+
+    def generate(self, context: dict) -> dict:
+        subject = context.get("subject", "computer_science")
+        subject_name = context.get("subject_name", subject)
+        level = context.get("level", 1)
+        topic = context.get("topic", subject_name)
+
+        level_names = {1: "入门", 2: "进阶", 3: "高级", 4: "专家"}
+        level_name = level_names.get(level, "入门")
+
+        return {
+            "type": "case",
+            "title": f"【{level_name}实战】{subject_name}·{topic}实操案例",
+            "format": "markdown",
+            "generated_at": datetime.utcnow().isoformat(),
+            "case": self._build_case(subject_name, topic, level_name, level),
+            "metadata": {
+                "subject": subject,
+                "level": level,
+                "topic": topic,
+                "difficulty": level_name,
+                "estimated_time": f"{random.randint(1,4)}小时"
+            }
+        }
+
+    def _build_case(self, subject, topic, level_name, level_id):
+        """构建案例项目（LLM优先，失败回退）"""
+        try:
+            from utils import call_llm, call_llm_json
+            sys_prompt = f"你是一个{subject}领域的实战项目导师，产出高质量案例。"
+            user_prompt = (
+                f"请为{subject}课程设计一个与{topic}相关的实战项目案例。\n"
+                f"学生水平：{level_name}（Level {level_id}/4）。\n\n"
+                "请包含：\n"
+                "1. 案例标题（有具体场景）\n"
+                "2. 项目背景（真实应用场景描述）\n"
+                "3. 学习目标（2-3个具体目标）\n"
+                "4. 功能需求（3-5条，逐条描述）\n"
+                "5. 实现步骤（分步指导，每步含提示）\n"
+                "6. 评估标准\n"
+                f"难度适配{level_name}水平。\n"
+                "只输出JSON：{{\"title\": \"案例标题\", \"background\": \"背景\", \"objectives\": [\"目标1\"], \"requirements\": [\"需求1\"], \"steps\": [{{\"step\": int, \"title\": \"步骤名\", \"content\": \"内容\", \"hint\": \"提示\"}}], \"evaluation_criteria\": [\"标准1\"]}}"
+            )
+            parsed = call_llm_json(sys_prompt, user_prompt, agent_name='CaseAgent')
+            if parsed:
+                parsed["generated_by"] = "llm"
+                return parsed
+        except Exception as e:
+            print(f"[CaseAgent] LLM失败: {e}")
+
+        # --- 增强的回退案例模板 ---
+        return {
+            "title": f"实战案例：基于{topic}的{subject}应用开发",
+            "background": f"假设你是一家初创公司的技术负责人，需要开发一个基于{topic}的核心功能模块。"
+                         f"你的团队规模小、时间紧，需要快速产出一个可演示的MVP（最小可行产品）。"
+                         f"本案例将带你从需求分析到功能实现，完整走一遍{subject}项目的开发流程。",
+            "objectives": [
+                f"掌握{topic}在{subject}中的核心实现方法",
+                f"独立完成一个从需求到实现的完整项目",
+                f"学会调试和优化{topic}相关的常见问题"
+            ],
+            "requirements": [
+                f"实现{topic}的基本功能：能够正确输入、处理、输出",
+                "处理至少3种边界情况（空输入、异常值、大数量）",
+                "添加基础错误处理和用户提示",
+                "输出结果格式规范，便于后续集成",
+                f"代码注释清晰，关键逻辑有说明{topic}文档标准"
+            ],
+            "steps": [
+                {"step": 1, "title": "需求分析与设计",
+                 "content": f"仔细阅读需求，画出{topic}功能模块的流程图。考虑输入是什么、经过什么处理、输出什么。",
+                 "hint": "先在纸上画出流程图，明确每个步骤的输入输出"},
+                {"step": 2, "title": "搭建项目骨架",
+                 "content": "创建项目目录结构，编写主函数框架和核心数据模型。不急于实现细节，先搭好架子。",
+                 "hint": "使用标准项目结构：src/ tests/ docs/ requirements.txt"},
+                {"step": 3, "title": f"实现{topic}核心逻辑",
+                 "content": f"按照流程图逐步实现核心功能。每实现一个子功能，立即运行测试验证。",
+                 "hint": "从最简单的功能开始，逐步增加复杂度。测试驱动开发是最好的方式。"},
+                {"step": 4, "title": "处理边界情况",
+                 "content": "检查空输入、异常值、大数据量等情况。添加对应的保护逻辑和错误提示。",
+                 "hint": "边界情况往往是最容易出bug的地方，不要跳过这一步"},
+                {"step": 5, "title": "测试与优化",
+                 "content": "编写测试用例覆盖核心功能和边界情况。分析性能瓶颈并优化。",
+                 "hint": "优先保证功能正确，再考虑性能优化"}
+            ],
+            "evaluation_criteria": [
+                "✅ 核心功能完整实现并能正确运行",
+                "✅ 边界情况处理完善，无崩溃风险",
+                "✅ 代码结构清晰，有适当注释",
+                "✅ 有至少5个测试用例覆盖核心逻辑"
+            ]
+        }
+
+
+class ResourceRecommenderAgent(BaseGeneratorAgent):
+    """推荐相关视频教程、书籍和论文（原MultimediaAgent，已重命名以准确反映功能）"""
+    name = "multimedia"
+    description = "推荐视频教程、书籍和论文"
+
+    # 学科映射 → 推荐资源库（按难度分级）
+    RESOURCE_DB = {
+        "ai": {
+            "name": "人工智能/机器学习",
+            "videos": [
+                {"title": "吴恩达《机器学习》", "url": "https://www.coursera.org/learn/machine-learning", "platform": "Coursera", "duration": "~60h", "level": 1},
+                {"title": "李宏毅《机器学习》", "url": "https://speech.ee.ntu.edu.tw/~hylee/ml/2021-spring.html", "platform": "YouTube/B站", "duration": "~40h", "level": 2},
+                {"title": "Stanford CS231n 计算机视觉", "url": "https://www.bilibili.com/video/BV1nJ411z7fe", "platform": "B站", "duration": "~30h", "level": 3},
+                {"title": "动手学深度学习(Li Mu)", "url": "https://space.bilibili.com/1567748478/channel/seriesdetail?sid=358497", "platform": "B站", "duration": "~50h", "level": 2},
+                {"title": "3Blue1Brown 神经网络", "url": "https://www.bilibili.com/video/BV1bx411M7Zx", "platform": "B站", "duration": "~2h", "level": 1},
+                {"title": "Fast.ai Practical Deep Learning", "url": "https://course.fast.ai/", "platform": "fast.ai", "duration": "~30h", "level": 2},
+                {"title": "MIT 6.S191 深度学习导论", "url": "http://introtodeeplearning.com/", "platform": "MIT OpenCourse", "duration": "~15h", "level": 2},
+                {"title": "Alex Smola 深度学习", "url": "https://d2l.ai/", "platform": "d2l.ai", "duration": "自定进度", "level": 2},
+            ],
+            "books": [
+                {"title": "《机器学习》（西瓜书）", "author": "周志华", "publisher": "清华大学出版社", "level": 2, "desc": "国内最经典的ML教材，理论扎实"},
+                {"title": "《统计学习方法》", "author": "李航", "publisher": "清华大学出版社", "level": 2, "desc": "算法推导清晰，适合打好理论基础"},
+                {"title": "《动手学深度学习》", "author": "Aston Zhang 等", "publisher": "人民邮电出版社", "level": 1, "desc": "代码理论结合，入门友好"},
+                {"title": "《深度学习》（花书）", "author": "Ian Goodfellow", "publisher": "MIT Press", "level": 3, "desc": "深度学习圣经，适合进阶"},
+                {"title": "《Python机器学习》", "author": "Sebastian Raschka", "publisher": "Packt", "level": 1, "desc": "实战导向，大量sklearn代码"},
+                {"title": "PRML", "author": "Christopher Bishop", "publisher": "Springer", "level": 3, "desc": "贝叶斯学派经典，数学要求高"},
+            ],
+            "papers": [
+                {"title": "Attention Is All You Need", "authors": "Vaswani et al.", "year": 2017, "venue": "NeurIPS", "level": 2, "desc": "Transformer开山之作"},
+                {"title": "ImageNet Classification with Deep CNNs", "authors": "Alex Krizhevsky et al.", "year": 2012, "venue": "NeurIPS", "level": 2, "desc": "AlexNet，深度学习里程碑"},
+                {"title": "Deep Residual Learning for Image Recognition", "authors": "He et al.", "year": 2016, "venue": "CVPR", "level": 3, "desc": "ResNet残差网络"},
+                {"title": "BERT: Pre-training of Deep Bidirectional Transformers", "authors": "Devlin et al.", "year": 2019, "venue": "NAACL", "level": 2, "desc": "NLP预训练模型里程碑"},
+            ]
+        },
+        "python": {
+            "name": "Python编程",
+            "videos": [
+                {"title": "Python官方教程", "url": "https://docs.python.org/3/tutorial/", "platform": "Python.org", "duration": "自定进度", "level": 1},
+                {"title": "CS50P Python入门", "url": "https://cs50.harvard.edu/python/", "platform": "Harvard", "duration": "~30h", "level": 1},
+                {"title": "Corey Schafer Python教程", "url": "https://www.youtube.com/user/schafer5", "platform": "YouTube", "duration": "~20h", "level": 1},
+                {"title": "Fluent Python实战", "url": "https://www.bilibili.com/video/BV1Q5411u7rL", "platform": "B站", "duration": "~15h", "level": 2},
+            ],
+            "books": [
+                {"title": "《Python编程从入门到实践》", "author": "Eric Matthes", "publisher": "人民邮电出版社", "level": 1, "desc": "最适合零基础的Python书"},
+                {"title": "《流畅的Python》", "author": "Luciano Ramalho", "publisher": "O Reilly", "level": 2, "desc": "进阶必备，深入Python特性"},
+                {"title": "《Python Cookbook》", "author": "David Beazley", "publisher": "O Reilly", "level": 3, "desc": "Python高阶技巧集"},
+            ],
+            "papers": [
+                {"title": "PEP 8 - Python Style Guide", "authors": "Guido van Rossum et al.", "year": 2001, "venue": "Python.org", "level": 1, "desc": "Python编码规范"},
+            ]
+        },
+        "web": {
+            "name": "Web开发",
+            "videos": [
+                {"title": "The Odin Project", "url": "https://www.theodinproject.com/", "platform": "Odin", "duration": "~100h", "level": 1},
+                {"title": "Full Stack Open", "url": "https://fullstackopen.com/", "platform": "University of Helsinki", "duration": "~80h", "level": 2},
+                {"title": "尚硅谷全栈教程", "url": "https://www.bilibili.com/video/BV1Bb411d7SL", "platform": "B站", "duration": "~60h", "level": 1},
+            ],
+            "books": [
+                {"title": "《JavaScript高级程序设计》", "author": "Nicholas Zakas", "publisher": "人民邮电出版社", "level": 2, "desc": "JS红宝书，前端必读"},
+                {"title": "《深入浅出Node.js》", "author": "朴灵", "publisher": "人民邮电出版社", "level": 2, "desc": "Node.js原理与实践"},
+            ],
+            "papers": [
+                {"title": "The Node.js Event Loop", "authors": "Node.js Foundation", "year": 2018, "venue": "Node.js Docs", "level": 2, "desc": "事件循环机制详解"},
+            ]
+        },
+        "data_science": {
+            "name": "数据科学",
+            "videos": [
+                {"title": "Kaggle Learn", "url": "https://www.kaggle.com/learn", "platform": "Kaggle", "duration": "自定进度", "level": 1},
+                {"title": "Joel Grus 数据科学", "url": "https://www.youtube.com/playlist?list=PL5-da3qGB5ICeVaQuyd56fiM1RZ6vDpgX", "platform": "YouTube", "duration": "~15h", "level": 1},
+            ],
+            "books": [
+                {"title": "《利用Python进行数据分析》", "author": "Wes McKinney", "publisher": "O Reilly", "level": 1, "desc": "pandas作者亲著"},
+                {"title": "《Python数据科学手册》", "author": "Jake VanderPlas", "publisher": "O Reilly", "level": 2, "desc": "数据科学生态全览"},
+            ],
+            "papers": [
+                {"title": "Scikit-learn: Machine Learning in Python", "authors": "Pedregosa et al.", "year": 2011, "venue": "JMLR", "level": 1, "desc": "sklearn框架论文"}
+            ]
+        },
+        "computer_science": {
+            "name": "计算机科学",
+            "videos": [
+                {"title": "CS50: 计算机科学导论", "url": "https://cs50.harvard.edu/", "platform": "Harvard/edX", "duration": "~60h", "level": 1},
+                {"title": "数据结构与算法", "url": "https://www.icourse163.org/course/ZJU-93001", "platform": "中国大学MOOC", "duration": "~40h", "level": 1},
+                {"title": "操作系统", "url": "https://www.icourse163.org/course/NJU-1001625001", "platform": "中国大学MOOC", "duration": "~40h", "level": 2},
+                {"title": "计算机网络：自顶向下方法", "url": "https://www.bilibili.com/video/BV1JV411t7ow", "platform": "B站", "duration": "~30h", "level": 2},
+                {"title": "MIT 6.006 算法导论", "url": "https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/", "platform": "MIT OCW", "duration": "~50h", "level": 2},
+            ],
+            "books": [
+                {"title": "《深入理解计算机系统》(CSAPP)", "author": "Randal Bryant", "publisher": "机械工业出版社", "level": 2, "desc": "CS经典，硬件软件贯通"},
+                {"title": "《算法导论》(CLRS)", "author": "Cormen et al.", "publisher": "MIT Press", "level": 3, "desc": "算法圣经"},
+                {"title": "《计算机网络：自顶向下方法》", "author": "James Kurose", "publisher": "机械工业出版社", "level": 1, "desc": "网络入门经典"},
+                {"title": "《操作系统概念》(恐龙书)", "author": "Silberschatz", "publisher": "Wiley", "level": 2, "desc": "操作系统标准教材"},
+            ],
+            "papers": [
+                {"title": "The Google File System", "authors": "Ghemawat et al.", "year": 2003, "venue": "SOSP", "level": 3, "desc": "分布式文件系统经典"},
+                {"title": "MapReduce: Simplified Data Processing", "authors": "Dean & Ghemawat", "year": 2004, "venue": "OSDI", "level": 3, "desc": "分布式计算框架原型"},
+            ]
+        },
+        "english": {
+            "name": "英语学习",
+            "videos": [
+                {"title": "BBC Learning English", "url": "https://www.bbc.co.uk/learningenglish", "platform": "BBC", "duration": "自定进度", "level": 1},
+                {"title": "EnglishClass101", "url": "https://www.englishclass101.com/", "platform": "EnglishClass101", "duration": "自定进度", "level": 1},
+                {"title": "TED Talks (英语字幕)", "url": "https://www.ted.com/talks", "platform": "TED", "duration": "每集~15min", "level": 2},
+                {"title": "Rachel s English", "url": "https://www.youtube.com/user/rachelsenglish", "platform": "YouTube", "duration": "~20h", "level": 1},
+                {"title": "Coursera Academic English", "url": "https://www.coursera.org/specializations/academic-english", "platform": "Coursera", "duration": "~40h", "level": 2},
+            ],
+            "books": [
+                {"title": "《英语语法新思维》", "author": "张满胜", "publisher": "群言出版社", "level": 1, "desc": "语法体系全面"},
+                {"title": "《牛津高阶英汉双解词典》", "author": "Hornby", "publisher": "商务印书馆", "level": 1, "desc": "权威词典"},
+                {"title": "《Word Power Made Easy》", "author": "Norman Lewis", "publisher": "Anchor", "level": 2, "desc": "词根词缀扩充词汇"},
+                {"title": "《The Elements of Style》", "author": "Strunk & White", "publisher": "Pearson", "level": 3, "desc": "英文写作指南"},
+            ],
+            "papers": [
+                {"title": "The Role of Input in SLA", "authors": "Stephen Krashen", "year": 1985, "venue": "Applied Linguistics", "level": 2, "desc": "输入假说理论"},
+            ]
+        },
+        "math": {
+            "name": "数学",
+            "videos": [
+                {"title": "3Blue1Brown 数学本质", "url": "https://www.bilibili.com/video/BV1qW411N7nX", "platform": "B站", "duration": "~30h", "level": 2},
+                {"title": "MIT 18.01 单变量微积分", "url": "https://ocw.mit.edu/courses/18-01sc-single-variable-calculus-fall-2010/", "platform": "MIT OCW", "duration": "~50h", "level": 1},
+                {"title": "Gilbert Strang 线性代数", "url": "https://www.bilibili.com/video/BV1ib411t7YR", "platform": "B站", "duration": "~30h", "level": 2},
+                {"title": "可汗学院 数学系列", "url": "https://www.khanacademy.org/math", "platform": "Khan Academy", "duration": "自定进度", "level": 1},
+            ],
+            "books": [
+                {"title": "《高等数学》同济版", "author": "同济大学数学系", "publisher": "高等教育出版社", "level": 1, "desc": "经典高数教材"},
+                {"title": "《线性代数及其应用》", "author": "David C. Lay", "publisher": "机械工业出版社", "level": 2, "desc": "应用导向线性代数"},
+                {"title": "《概率论与数理统计》", "author": "陈希孺", "publisher": "中国科学技术出版社", "level": 2, "desc": "概率统计经典"},
+            ],
+            "papers": [
+                {"title": "The Unreasonable Effectiveness of Mathematics", "authors": "Eugene Wigner", "year": 1960, "venue": "CPAM", "level": 2, "desc": "数学在科学中的有效性"},
+            ]
+        },
+        "physics": {
+            "name": "物理",
+            "videos": [
+                {"title": "MIT 8.01 经典力学", "url": "https://ocw.mit.edu/courses/8-01sc-classical-mechanics-fall-2016/", "platform": "MIT OCW", "duration": "~50h", "level": 1},
+                {"title": "费曼物理 讲义视频", "url": "https://www.bilibili.com/video/BV1QM411r7mt", "platform": "B站", "duration": "~40h", "level": 2},
+                {"title": "Crash Course Physics", "url": "https://www.youtube.com/playlist?list=PL8dPuuaLjXtN0ge7yDk_UA0ldZJdhwkoV", "platform": "YouTube", "duration": "~10h", "level": 1},
+            ],
+            "books": [
+                {"title": "《费曼物理学讲义》", "author": "Richard Feynman", "publisher": "上海科学技术出版社", "level": 2, "desc": "物理经典"},
+                {"title": "《新概念物理教程》", "author": "赵凯华", "publisher": "高等教育出版社", "level": 1, "desc": "国内物理经典教材"},
+                {"title": "《大学物理》", "author": "张三慧", "publisher": "清华大学出版社", "level": 1, "desc": "大学物理标准教材"},
+            ],
+            "papers": []
+        },
+        "chemistry": {
+            "name": "化学",
+            "videos": [
+                {"title": "MIT 5.111 化学原理", "url": "https://ocw.mit.edu/courses/5-111sc-principles-of-chemistry-fall-2014/", "platform": "MIT OCW", "duration": "~40h", "level": 1},
+                {"title": "Crash Course Chemistry", "url": "https://www.youtube.com/playlist?list=PL8dPuuaLjXtPHzzYuWy6fYEaX9mQQ8oGr", "platform": "YouTube", "duration": "~10h", "level": 1},
+                {"title": "有机化学基础", "url": "https://www.icourse163.org/course/PKU-1002794001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "无机化学", "url": "https://www.icourse163.org/course/NJU-1001693001", "platform": "中国大学MOOC", "duration": "~35h", "level": 1},
+                {"title": "分析化学", "url": "https://www.icourse163.org/course/HUST-1001988001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "Physical Chemistry (MIT)", "url": "https://ocw.mit.edu/courses/5-60-thermodynamics-kinetics-spring-2008/", "platform": "MIT OCW", "duration": "~40h", "level": 3},
+                {"title": "化学反应工程", "url": "https://www.icourse163.org/course/TJU-1002011001", "platform": "中国大学MOOC", "duration": "~35h", "level": 3},
+            ],
+            "books": [
+                {"title": "《普通化学原理》", "author": "华彤文", "publisher": "北京大学出版社", "level": 1, "desc": "化学入门经典"},
+                {"title": "《有机化学》", "author": "邢其毅", "publisher": "高等教育出版社", "level": 2, "desc": "有机化学权威教材"},
+                {"title": "《物理化学》", "author": "Atkins", "publisher": "Oxford", "level": 3, "desc": "物理化学经典"},
+                {"title": "《无机化学》", "author": "宋天佑", "publisher": "高等教育出版社", "level": 1, "desc": "无机化学标准教材"},
+                {"title": "《分析化学》", "author": "武汉大学", "publisher": "高等教育出版社", "level": 2, "desc": "分析化学经典"},
+                {"title": "《化学原理》", "author": "Zumdahl", "publisher": "Brooks/Cole", "level": 1, "desc": "国外经典教材"},
+            ],
+            "papers": [
+                {"title": "The Structure of Scientific Revolutions", "authors": "Thomas Kuhn", "year": 1962, "venue": "University of Chicago Press", "level": 2, "desc": "科学哲学经典，影响化学研究范式"},
+                {"title": "Nobel Lectures in Chemistry", "authors": "Various", "year": 2000, "venue": "World Scientific", "level": 3, "desc": "诺贝尔化学奖演讲集"},
+            ]
+        },
+        "biology": {
+            "name": "生物学",
+            "videos": [
+                {"title": "Crash Course Biology", "url": "https://www.youtube.com/playlist?list=PL8dPuuaLjXtPWfR6I78x0y75H3qI7W9rY", "platform": "YouTube", "duration": "~15h", "level": 1},
+                {"title": "MIT 7.012 基础生物学", "url": "https://ocw.mit.edu/courses/7-012-introduction-to-biology-fall-2004/", "platform": "MIT OCW", "duration": "~40h", "level": 1},
+                {"title": "可汗学院 生物学", "url": "https://www.khanacademy.org/science/biology", "platform": "Khan Academy", "duration": "自定进度", "level": 1},
+                {"title": "细胞生物学", "url": "https://www.icourse163.org/course/ZJU-1001985001", "platform": "中国大学MOOC", "duration": "~35h", "level": 2},
+                {"title": "遗传学", "url": "https://www.icourse163.org/course/FJNU-1002088001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "生态学", "url": "https://www.icourse163.org/course/XMU-1002078001", "platform": "中国大学MOOC", "duration": "~25h", "level": 2},
+                {"title": "MIT 7.016 分子生物学", "url": "https://ocw.mit.edu/courses/7-016-introductory-biology-fall-2018/", "platform": "MIT OCW", "duration": "~40h", "level": 3},
+            ],
+            "books": [
+                {"title": "《普通生物学》", "author": "陈阅增", "publisher": "高等教育出版社", "level": 1, "desc": "生物学入门"},
+                {"title": "《分子生物学》", "author": "Robert Weaver", "publisher": "McGraw-Hill", "level": 2, "desc": "分子生物学经典"},
+                {"title": "《基因VIII》", "author": "Benjamin Lewin", "publisher": "Pearson", "level": 3, "desc": "遗传学权威"},
+                {"title": "《细胞生物学》", "author": "翟中和", "publisher": "高等教育出版社", "level": 2, "desc": "细胞生物学经典"},
+                {"title": "《生态学》", "author": "李博", "publisher": "高等教育出版社", "level": 2, "desc": "生态学权威"},
+                {"title": "《Biology》", "author": "Campbell", "publisher": "Pearson", "level": 1, "desc": "国外生物学经典教材"},
+            ],
+            "papers": [
+                {"title": "Molecular Structure of Nucleic Acids", "authors": "Watson & Crick", "year": 1953, "venue": "Nature", "level": 3, "desc": "DNA双螺旋结构发现"},
+                {"title": "The Origin of Species", "authors": "Charles Darwin", "year": 1859, "venue": "John Murray", "level": 2, "desc": "进化论经典"},
+            ]
+        },
+        "medicine": {
+            "name": "医学",
+            "videos": [
+                {"title": "医学导论", "url": "https://www.icourse163.org/course/XJTU-1001908001", "platform": "中国大学MOOC", "duration": "~20h", "level": 1},
+                {"title": "Harvard Medical School Courses", "url": "https://online-learning.hms.harvard.edu/", "platform": "Harvard", "duration": "自定进度", "level": 2},
+                {"title": "人体解剖学", "url": "https://www.icourse163.org/course/NTU-1001707001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "病理学", "url": "https://www.icourse163.org/course/FJMU-1002008001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "药理学", "url": "https://www.icourse163.org/course/SDU-1002026001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "外科学", "url": "https://www.icourse163.org/course/SZU-1002016001", "platform": "中国大学MOOC", "duration": "~40h", "level": 3},
+                {"title": "诊断学", "url": "https://www.icourse163.org/course/TJMU-1002066001", "platform": "中国大学MOOC", "duration": "~35h", "level": 3},
+            ],
+            "books": [
+                {"title": "《系统解剖学》", "author": "柏树令", "publisher": "人民卫生出版社", "level": 1, "desc": "解剖学标准教材"},
+                {"title": "《生理学》", "author": "朱大年", "publisher": "人民卫生出版社", "level": 2, "desc": "生理学经典"},
+                {"title": "《内科学》", "author": "葛均波", "publisher": "人民卫生出版社", "level": 3, "desc": "内科学权威"},
+                {"title": "《病理学》", "author": "李玉林", "publisher": "人民卫生出版社", "level": 2, "desc": "病理学经典"},
+                {"title": "《药理学》", "author": "杨宝峰", "publisher": "人民卫生出版社", "level": 2, "desc": "药理学权威"},
+                {"title": "《外科学》", "author": "陈孝平", "publisher": "人民卫生出版社", "level": 3, "desc": "外科学标准教材"},
+            ],
+            "papers": [
+                {"title": "The Lancet Medical Journals", "authors": "Various", "year": 1823, "venue": "Elsevier", "level": 3, "desc": "医学顶级期刊"},
+                {"title": "New England Journal of Medicine", "authors": "Various", "year": 1812, "venue": "NEJM", "level": 3, "desc": "医学权威期刊"},
+            ]
+        },
+        "finance": {
+            "name": "金融",
+            "videos": [
+                {"title": "耶鲁大学 金融市场", "url": "https://www.coursera.org/learn/finance-markets", "platform": "Coursera", "duration": "~20h", "level": 1},
+                {"title": "可汗学院 金融学", "url": "https://www.khanacademy.org/economics-finance-domain", "platform": "Khan Academy", "duration": "自定进度", "level": 1},
+                {"title": "MIT 18.S096 金融工程", "url": "https://ocw.mit.edu/courses/18-s096-topics-in-mathematics-with-applications-in-finance-fall-2013/", "platform": "MIT OCW", "duration": "~30h", "level": 2},
+                {"title": "金融工程", "url": "https://www.icourse163.org/course/SHUFE-1002009001", "platform": "中国大学MOOC", "duration": "~35h", "level": 2},
+                {"title": "商业银行经营管理", "url": "https://www.icourse163.org/course/ZJU-1001946001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "金融风险管理", "url": "https://www.icourse163.org/course/SZU-1002036001", "platform": "中国大学MOOC", "duration": "~30h", "level": 3},
+                {"title": "量化投资", "url": "https://www.icourse163.org/course/FDU-1002046001", "platform": "中国大学MOOC", "duration": "~35h", "level": 3},
+            ],
+            "books": [
+                {"title": "《货币银行学》", "author": "易纲", "publisher": "格致出版社", "level": 1, "desc": "金融学基础"},
+                {"title": "《投资学》", "author": "滋维·博迪", "publisher": "机械工业出版社", "level": 2, "desc": "投资学经典"},
+                {"title": "《公司金融》", "author": "Stephen Ross", "publisher": "McGraw-Hill", "level": 2, "desc": "公司金融权威"},
+                {"title": "《金融工程》", "author": "John Hull", "publisher": "Pearson", "level": 3, "desc": "金融工程经典"},
+                {"title": "《金融学》", "author": "黄达", "publisher": "中国人民大学出版社", "level": 1, "desc": "金融学权威教材"},
+                {"title": "《金融市场学》", "author": "张亦春", "publisher": "高等教育出版社", "level": 2, "desc": "金融市场经典"},
+            ],
+            "papers": [
+                {"title": "Modern Portfolio Theory", "authors": "Harry Markowitz", "year": 1952, "venue": "Journal of Finance", "level": 3, "desc": "现代投资组合理论"},
+                {"title": "The Black-Scholes Model", "authors": "Black & Scholes", "year": 1973, "venue": "JPE", "level": 3, "desc": "期权定价模型"},
+            ]
+        },
+        "law": {
+            "name": "法学",
+            "videos": [
+                {"title": "法理学导论", "url": "https://www.icourse163.org/course/ZJU-1001754001", "platform": "中国大学MOOC", "duration": "~20h", "level": 1},
+                {"title": "哈佛法学院课程", "url": "https://www.law.harvard.edu/academics/courses/", "platform": "Harvard", "duration": "自定进度", "level": 2},
+                {"title": "宪法学", "url": "https://www.icourse163.org/course/ZZU-1001709001", "platform": "中国大学MOOC", "duration": "~25h", "level": 1},
+                {"title": "民法学", "url": "https://www.icourse163.org/course/ZJU-1001965001", "platform": "中国大学MOOC", "duration": "~35h", "level": 2},
+                {"title": "刑法学", "url": "https://www.icourse163.org/course/XJTU-1002056001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "民事诉讼法", "url": "https://www.icourse163.org/course/THU-1002066001", "platform": "中国大学MOOC", "duration": "~30h", "level": 3},
+                {"title": "刑事诉讼法", "url": "https://www.icourse163.org/course/SDU-1002036001", "platform": "中国大学MOOC", "duration": "~30h", "level": 3},
+            ],
+            "books": [
+                {"title": "《法理学》", "author": "张文显", "publisher": "高等教育出版社", "level": 1, "desc": "法理学经典"},
+                {"title": "《刑法学》", "author": "张明楷", "publisher": "法律出版社", "level": 2, "desc": "刑法学权威"},
+                {"title": "《民法总则》", "author": "王利明", "publisher": "中国人民大学出版社", "level": 1, "desc": "民法基础"},
+                {"title": "《民法分则》", "author": "王利明", "publisher": "中国人民大学出版社", "level": 2, "desc": "民法分则权威"},
+                {"title": "《民事诉讼法》", "author": "张卫平", "publisher": "法律出版社", "level": 3, "desc": "民事诉讼法经典"},
+                {"title": "《国际法》", "author": "邵津", "publisher": "北京大学出版社", "level": 2, "desc": "国际法权威"},
+            ],
+            "papers": [
+                {"title": "The Concept of Law", "authors": "H.L.A. Hart", "year": 1961, "venue": "Oxford", "level": 3, "desc": "法理学经典"},
+                {"title": "Natural Law and Natural Rights", "authors": "John Finnis", "year": 1980, "venue": "Oxford", "level": 3, "desc": "自然法理论"},
+            ]
+        },
+        "psychology": {
+            "name": "心理学",
+            "videos": [
+                {"title": "耶鲁大学 心理学导论", "url": "https://www.coursera.org/learn/introduction-to-psychology", "platform": "Coursera", "duration": "~20h", "level": 1},
+                {"title": "Crash Course Psychology", "url": "https://www.youtube.com/playlist?list=PL8dPuuaLjXtOPRKzVLY0jJY-uHOH9KVU6", "platform": "YouTube", "duration": "~10h", "level": 1},
+                {"title": "社会心理学", "url": "https://www.icourse163.org/course/BJUT-1002572001", "platform": "中国大学MOOC", "duration": "~20h", "level": 2},
+                {"title": "认知心理学", "url": "https://www.icourse163.org/course/ZJU-1002076001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "心理咨询与治疗", "url": "https://www.icourse163.org/course/NJU-1002086001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "实验心理学", "url": "https://www.icourse163.org/course/CNU-1002066001", "platform": "中国大学MOOC", "duration": "~35h", "level": 3},
+                {"title": "心理统计学", "url": "https://www.icourse163.org/course/BFSU-1002056001", "platform": "中国大学MOOC", "duration": "~30h", "level": 3},
+            ],
+            "books": [
+                {"title": "《普通心理学》", "author": "彭聃龄", "publisher": "北京师范大学出版社", "level": 1, "desc": "心理学入门"},
+                {"title": "《社会心理学》", "author": "戴维·迈尔斯", "publisher": "人民邮电出版社", "level": 2, "desc": "社会心理学经典"},
+                {"title": "《发展心理学》", "author": "林崇德", "publisher": "人民教育出版社", "level": 2, "desc": "发展心理学权威"},
+                {"title": "《认知心理学》", "author": "王甦", "publisher": "北京大学出版社", "level": 2, "desc": "认知心理学经典"},
+                {"title": "《实验心理学》", "author": "郭秀艳", "publisher": "人民教育出版社", "level": 3, "desc": "实验心理学权威"},
+                {"title": "《心理学与生活》", "author": "Philip Zimbardo", "publisher": "人民邮电出版社", "level": 1, "desc": "心理学入门经典"},
+            ],
+            "papers": [
+                {"title": "The Interpretation of Dreams", "authors": "Sigmund Freud", "year": 1899, "venue": "Leipziger Verlagsanstalt", "level": 2, "desc": "精神分析经典"},
+                {"title": "Principles of Psychology", "authors": "William James", "year": 1890, "venue": "Henry Holt", "level": 2, "desc": "心理学经典"},
+            ]
+        },
+        "economics": {
+            "name": "经济学",
+            "videos": [
+                {"title": "耶鲁大学 经济学原理", "url": "https://www.coursera.org/learn/principles-of-microeconomics", "platform": "Coursera", "duration": "~20h", "level": 1},
+                {"title": "MIT 14.01 微观经济学", "url": "https://ocw.mit.edu/courses/14-01sc-principles-of-microeconomics-fall-2011/", "platform": "MIT OCW", "duration": "~40h", "level": 1},
+                {"title": "宏观经济学", "url": "https://www.icourse163.org/course/CQU-1002081001", "platform": "中国大学MOOC", "duration": "~25h", "level": 2},
+                {"title": "计量经济学", "url": "https://www.icourse163.org/course/ZJU-1002096001", "platform": "中国大学MOOC", "duration": "~35h", "level": 2},
+                {"title": "国际经济学", "url": "https://www.icourse163.org/course/HUST-1002628001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "博弈论", "url": "https://www.icourse163.org/course/XJTU-1002066001", "platform": "中国大学MOOC", "duration": "~30h", "level": 3},
+                {"title": "MIT 14.02 宏观经济学", "url": "https://ocw.mit.edu/courses/14-02-principles-of-macroeconomics-spring-2014/", "platform": "MIT OCW", "duration": "~40h", "level": 2},
+            ],
+            "books": [
+                {"title": "《经济学原理》", "author": "曼昆", "publisher": "北京大学出版社", "level": 1, "desc": "经济学入门经典"},
+                {"title": "《微观经济学》", "author": "平狄克", "publisher": "中国人民大学出版社", "level": 2, "desc": "微观经济学权威"},
+                {"title": "《宏观经济学》", "author": "多恩布什", "publisher": "中国人民大学出版社", "level": 2, "desc": "宏观经济学经典"},
+                {"title": "《计量经济学》", "author": "伍德里奇", "publisher": "中国人民大学出版社", "level": 3, "desc": "计量经济学经典"},
+                {"title": "《国际经济学》", "author": "克鲁格曼", "publisher": "中国人民大学出版社", "level": 2, "desc": "国际经济学权威"},
+                {"title": "《博弈论》", "author": "Gibbons", "publisher": "中国人民大学出版社", "level": 3, "desc": "博弈论权威"},
+            ],
+            "papers": [
+                {"title": "An Inquiry into the Nature", "authors": "Adam Smith", "year": 1776, "venue": "W. Strahan", "level": 2, "desc": "经济学奠基之作"},
+                {"title": "The General Theory", "authors": "John Keynes", "year": 1936, "venue": "Macmillan", "level": 3, "desc": "宏观经济学经典"},
+            ]
+        },
+        "engineering": {
+            "name": "工程学",
+            "videos": [
+                {"title": "工程导论", "url": "https://www.icourse163.org/course/HIT-1001971001", "platform": "中国大学MOOC", "duration": "~15h", "level": 1},
+                {"title": "MIT 2.007 设计与制造", "url": "https://ocw.mit.edu/courses/2-007-design-and-manufacturing-i-spring-2009/", "platform": "MIT OCW", "duration": "~50h", "level": 2},
+                {"title": "工程力学", "url": "https://www.icourse163.org/course/HUST-1002619002", "platform": "中国大学MOOC", "duration": "~30h", "level": 1},
+                {"title": "材料力学", "url": "https://www.icourse163.org/course/ZJU-1001995001", "platform": "中国大学MOOC", "duration": "~35h", "level": 2},
+                {"title": "流体力学", "url": "https://www.icourse163.org/course/HUST-1002618001", "platform": "中国大学MOOC", "duration": "~35h", "level": 2},
+                {"title": "热力学", "url": "https://www.icourse163.org/course/XJTU-1002046001", "platform": "中国大学MOOC", "duration": "~30h", "level": 3},
+                {"title": "控制工程", "url": "https://www.icourse163.org/course/HUST-1002627001", "platform": "中国大学MOOC", "duration": "~35h", "level": 3},
+            ],
+            "books": [
+                {"title": "《工程力学》", "author": "范钦珊", "publisher": "高等教育出版社", "level": 1, "desc": "工程力学基础"},
+                {"title": "《机械设计》", "author": "濮良贵", "publisher": "高等教育出版社", "level": 2, "desc": "机械设计经典"},
+                {"title": "《工程材料》", "author": "崔忠圻", "publisher": "机械工业出版社", "level": 2, "desc": "工程材料权威"},
+                {"title": "《材料力学》", "author": "孙训方", "publisher": "高等教育出版社", "level": 2, "desc": "材料力学经典"},
+                {"title": "《流体力学》", "author": "吴望一", "publisher": "北京大学出版社", "level": 2, "desc": "流体力学权威"},
+                {"title": "《控制工程基础》", "author": "董景新", "publisher": "清华大学出版社", "level": 3, "desc": "控制工程经典"},
+            ],
+            "papers": [
+                {"title": "Engineering Design Methods", "authors": "Nigel Cross", "year": 1989, "venue": "Wiley", "level": 2, "desc": "工程设计方法论"},
+                {"title": "The Art of Engineering", "authors": "Henry Petroski", "year": 1996, "venue": "Vintage", "level": 2, "desc": "工程艺术"},
+            ]
+        },
+        "history": {
+            "name": "历史学",
+            "videos": [
+                {"title": "中国通史", "url": "https://www.icourse163.org/course/XJTU-1001624001", "platform": "中国大学MOOC", "duration": "~40h", "level": 1},
+                {"title": "耶鲁大学 欧洲文明史", "url": "https://www.coursera.org/learn/european-civilization", "platform": "Coursera", "duration": "~25h", "level": 2},
+                {"title": "世界历史", "url": "https://www.icourse163.org/course/SCNU-1001787001", "platform": "中国大学MOOC", "duration": "~30h", "level": 1},
+                {"title": "中国近代史", "url": "https://www.icourse163.org/course/HUST-1002636001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "史学概论", "url": "https://www.icourse163.org/course/NJU-1002006001", "platform": "中国大学MOOC", "duration": "~25h", "level": 2},
+                {"title": "西方史学史", "url": "https://www.icourse163.org/course/ZJU-1002016001", "platform": "中国大学MOOC", "duration": "~30h", "level": 3},
+                {"title": "考古学概论", "url": "https://www.icourse163.org/course/XMU-1002026001", "platform": "中国大学MOOC", "duration": "~30h", "level": 3},
+            ],
+            "books": [
+                {"title": "《中国古代史》", "author": "朱绍侯", "publisher": "福建人民出版社", "level": 1, "desc": "中国古代史经典"},
+                {"title": "《全球通史》", "author": "斯塔夫里阿诺斯", "publisher": "北京大学出版社", "level": 2, "desc": "全球史权威"},
+                {"title": "《万历十五年》", "author": "黄仁宇", "publisher": "中华书局", "level": 2, "desc": "历史研究经典"},
+                {"title": "《中国近代史》", "author": "蒋廷黻", "publisher": "中华书局", "level": 2, "desc": "中国近代史经典"},
+                {"title": "《史学概论》", "author": "庞卓恒", "publisher": "高等教育出版社", "level": 2, "desc": "史学理论基础"},
+                {"title": "《史记》", "author": "司马迁", "publisher": "中华书局", "level": 2, "desc": "中国史学经典"},
+            ],
+            "papers": [
+                {"title": "Historiography", "authors": "Georg G. Iggers", "year": 1997, "venue": "Wesleyan", "level": 3, "desc": "史学史权威"},
+                {"title": "The Historians' Craft", "authors": "Marc Bloch", "year": 1949, "venue": "Manchester", "level": 2, "desc": "史学方法论"},
+            ]
+        },
+        "music": {
+            "name": "音乐",
+            "videos": [
+                {"title": "音乐基础理论", "url": "https://www.icourse163.org/course/HUBU-1001906001", "platform": "中国大学MOOC", "duration": "~20h", "level": 1},
+                {"title": "Music Theory", "url": "https://www.khanacademy.org/humanities/music", "platform": "Khan Academy", "duration": "自定进度", "level": 1},
+                {"title": "西方音乐史", "url": "https://www.icourse163.org/course/CUMTB-1002007001", "platform": "中国大学MOOC", "duration": "~25h", "level": 2},
+                {"title": "中国音乐史", "url": "https://www.icourse163.org/course/BFSU-1002016001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "视唱练耳", "url": "https://www.icourse163.org/course/SCNU-1002006001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "和声基础", "url": "https://www.icourse163.org/course/HZNU-1002066001", "platform": "中国大学MOOC", "duration": "~35h", "level": 3},
+                {"title": "曲式分析", "url": "https://www.icourse163.org/course/NJU-1002056001", "platform": "中国大学MOOC", "duration": "~35h", "level": 3},
+            ],
+            "books": [
+                {"title": "《基本乐理通用教材》", "author": "李重光", "publisher": "高等教育出版社", "level": 1, "desc": "乐理基础"},
+                {"title": "《西方音乐史》", "author": "于润洋", "publisher": "上海音乐出版社", "level": 2, "desc": "西方音乐史经典"},
+                {"title": "《中国音乐史》", "author": "杨荫浏", "publisher": "人民音乐出版社", "level": 2, "desc": "中国音乐史权威"},
+                {"title": "《和声学》", "author": "斯波索宾", "publisher": "人民音乐出版社", "level": 3, "desc": "和声学经典"},
+                {"title": "《曲式与作品分析》", "author": "吴祖强", "publisher": "人民音乐出版社", "level": 3, "desc": "曲式分析权威"},
+                {"title": "《音乐美学基础》", "author": "张前", "publisher": "中央音乐学院出版社", "level": 2, "desc": "音乐美学基础"},
+            ],
+            "papers": [
+                {"title": "The Philosophy of Music", "authors": "Peter Kivy", "year": 2002, "venue": "Oxford", "level": 2, "desc": "音乐哲学"},
+                {"title": "Music in Western Civilization", "authors": "Paul Henry Lang", "year": 1941, "venue": "W.W. Norton", "level": 2, "desc": "西方文明中的音乐"},
+            ]
+        },
+        "education": {
+            "name": "教育学",
+            "videos": [
+                {"title": "教育学原理", "url": "https://www.icourse163.org/course/BEIJING-NORMAL-1002170001", "platform": "中国大学MOOC", "duration": "~25h", "level": 1},
+                {"title": "教育心理学", "url": "https://www.icourse163.org/course/SCNU-1001956001", "platform": "中国大学MOOC", "duration": "~20h", "level": 2},
+                {"title": "教学设计", "url": "https://www.icourse163.org/course/ZJU-1002094001", "platform": "中国大学MOOC", "duration": "~20h", "level": 2},
+                {"title": "教育社会学", "url": "https://www.icourse163.org/course/HZNU-1002036001", "platform": "中国大学MOOC", "duration": "~25h", "level": 2},
+                {"title": "中外教育史", "url": "https://www.icourse163.org/course/BNU-1002046001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "教育测量与评价", "url": "https://www.icourse163.org/course/NENU-1002056001", "platform": "中国大学MOOC", "duration": "~30h", "level": 3},
+                {"title": "教育研究方法", "url": "https://www.icourse163.org/course/HNU-1002066001", "platform": "中国大学MOOC", "duration": "~35h", "level": 3},
+            ],
+            "books": [
+                {"title": "《教育学》", "author": "王道俊", "publisher": "人民教育出版社", "level": 1, "desc": "教育学基础"},
+                {"title": "《教育心理学》", "author": "陈琦", "publisher": "高等教育出版社", "level": 2, "desc": "教育心理学经典"},
+                {"title": "《课程与教学论》", "author": "钟启泉", "publisher": "华东师范大学出版社", "level": 2, "desc": "课程论权威"},
+                {"title": "《中国教育史》", "author": "孙培青", "publisher": "华东师范大学出版社", "level": 2, "desc": "中国教育史经典"},
+                {"title": "《外国教育史》", "author": "张斌贤", "publisher": "教育科学出版社", "level": 2, "desc": "外国教育史权威"},
+                {"title": "《教育研究方法导论》", "author": "裴娣娜", "publisher": "安徽教育出版社", "level": 3, "desc": "教育研究方法经典"},
+            ],
+            "papers": [
+                {"title": "Democracy and Education", "authors": "John Dewey", "year": 1916, "venue": "Free Press", "level": 2, "desc": "杜威教育哲学"},
+                {"title": "How Children Learn", "authors": "John Holt", "year": 1964, "venue": "Penguin", "level": 2, "desc": "儿童学习理论"},
+            ]
+        },
+        "art_design": {
+            "name": "艺术设计",
+            "videos": [
+                {"title": "设计基础", "url": "https://www.icourse163.org/course/NEU-1001907001", "platform": "中国大学MOOC", "duration": "~20h", "level": 1},
+                {"title": "UI/UX设计", "url": "https://www.coursera.org/specializations/ui-design", "platform": "Coursera", "duration": "~40h", "level": 2},
+                {"title": "Adobe Photoshop教程", "url": "https://www.bilibili.com/video/BV1sb411e7cQ", "platform": "B站", "duration": "~30h", "level": 1},
+                {"title": "平面设计", "url": "https://www.icourse163.org/course/SZU-1002016001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "色彩构成", "url": "https://www.icourse163.org/course/JLU-1002076001", "platform": "中国大学MOOC", "duration": "~25h", "level": 1},
+                {"title": "字体设计", "url": "https://www.icourse163.org/course/NEU-1002036001", "platform": "中国大学MOOC", "duration": "~25h", "level": 2},
+                {"title": "品牌设计", "url": "https://www.icourse163.org/course/ZJU-1002086001", "platform": "中国大学MOOC", "duration": "~30h", "level": 3},
+            ],
+            "books": [
+                {"title": "《设计心理学》", "author": "唐纳德·诺曼", "publisher": "中信出版社", "level": 1, "desc": "设计心理学经典"},
+                {"title": "《写给大家看的设计书》", "author": "William Long", "publisher": "人民邮电出版社", "level": 1, "desc": "设计入门"},
+                {"title": "《交互设计精髓》", "author": "Alan Cooper", "publisher": "电子工业出版社", "level": 2, "desc": "交互设计权威"},
+                {"title": "《配色设计原理》", "author": "伊达千代", "publisher": "中信出版社", "level": 1, "desc": "配色设计经典"},
+                {"title": "《Logo设计圣经》", "author": "David Airey", "publisher": "人民邮电出版社", "level": 2, "desc": "Logo设计权威"},
+                {"title": "《品牌设计法则》", "author": "Marty Neumeier", "publisher": "中信出版社", "level": 3, "desc": "品牌设计经典"},
+            ],
+            "papers": [
+                {"title": "Designing Interactions", "authors": "Bill Moggridge", "year": 2007, "venue": "MIT Press", "level": 2, "desc": "交互设计经典"},
+                {"title": "The Design of Everyday Things", "authors": "Donald Norman", "year": 1988, "venue": "Basic Books", "level": 2, "desc": "设计心理学奠基"},
+            ]
+        },
+        "architecture": {
+            "name": "建筑学",
+            "videos": [
+                {"title": "建筑设计基础", "url": "https://www.icourse163.org/course/TJU-1002005001", "platform": "中国大学MOOC", "duration": "~25h", "level": 1},
+                {"title": "建筑历史", "url": "https://www.icourse163.org/course/HUST-1002629001", "platform": "中国大学MOOC", "duration": "~20h", "level": 2},
+                {"title": "建筑构造", "url": "https://www.icourse163.org/course/TJU-1001955001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "建筑物理", "url": "https://www.icourse163.org/course/TJU-1002026001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "建筑结构", "url": "https://www.icourse163.org/course/HUST-1002638001", "platform": "中国大学MOOC", "duration": "~35h", "level": 2},
+                {"title": "建筑设计原理", "url": "https://www.icourse163.org/course/XJTU-1002076001", "platform": "中国大学MOOC", "duration": "~35h", "level": 3},
+                {"title": "景观设计", "url": "https://www.icourse163.org/course/TJU-1002046001", "platform": "中国大学MOOC", "duration": "~30h", "level": 3},
+            ],
+            "books": [
+                {"title": "《建筑空间组合论》", "author": "彭一刚", "publisher": "中国建筑工业出版社", "level": 1, "desc": "建筑设计基础"},
+                {"title": "《中国建筑史》", "author": "梁思成", "publisher": "中国建筑工业出版社", "level": 2, "desc": "中国建筑史权威"},
+                {"title": "《外国建筑史》", "author": "陈志华", "publisher": "中国建筑工业出版社", "level": 2, "desc": "外国建筑史经典"},
+                {"title": "《建筑物理》", "author": "柳孝图", "publisher": "中国建筑工业出版社", "level": 2, "desc": "建筑物理经典"},
+                {"title": "《建筑结构选型》", "author": "钱稼茹", "publisher": "清华大学出版社", "level": 2, "desc": "建筑结构权威"},
+                {"title": "《景观设计学》", "author": "俞孔坚", "publisher": "中国建筑工业出版社", "level": 3, "desc": "景观设计经典"},
+            ],
+            "papers": [
+                {"title": "Towards a New Architecture", "authors": "Le Corbusier", "year": 1923, "venue": "G. Crès", "level": 2, "desc": "现代建筑宣言"},
+                {"title": "The Architecture of the City", "authors": "Aldo Rossi", "year": 1966, "venue": "Einaudi", "level": 3, "desc": "城市建筑理论"},
+            ]
+        },
+        "literature": {
+            "name": "文学",
+            "videos": [
+                {"title": "中国文学经典", "url": "https://www.icourse163.org/course/BFSU-1002036001", "platform": "中国大学MOOC", "duration": "~30h", "level": 1},
+                {"title": "西方文学经典", "url": "https://www.icourse163.org/course/XJTU-1002086001", "platform": "中国大学MOOC", "duration": "~25h", "level": 2},
+                {"title": "文学理论", "url": "https://www.icourse163.org/course/NJU-1002006001", "platform": "中国大学MOOC", "duration": "~20h", "level": 2},
+                {"title": "古代汉语", "url": "https://www.icourse163.org/course/PKU-1001925001", "platform": "中国大学MOOC", "duration": "~40h", "level": 2},
+                {"title": "现代汉语", "url": "https://www.icourse163.org/course/HUST-1002617001", "platform": "中国大学MOOC", "duration": "~35h", "level": 2},
+                {"title": "比较文学", "url": "https://www.icourse163.org/course/NJU-1002046001", "platform": "中国大学MOOC", "duration": "~30h", "level": 3},
+                {"title": "文学批评", "url": "https://www.icourse163.org/course/ZJU-1002056001", "platform": "中国大学MOOC", "duration": "~30h", "level": 3},
+            ],
+            "books": [
+                {"title": "《中国文学史》", "author": "袁行霈", "publisher": "高等教育出版社", "level": 1, "desc": "中国文学史权威"},
+                {"title": "《西方文学史》", "author": "朱维之", "publisher": "南开大学出版社", "level": 2, "desc": "西方文学史经典"},
+                {"title": "《文学理论教程》", "author": "童庆炳", "publisher": "高等教育出版社", "level": 2, "desc": "文学理论基础"},
+                {"title": "《古代汉语》", "author": "王力", "publisher": "中华书局", "level": 2, "desc": "古代汉语权威"},
+                {"title": "《现代汉语》", "author": "黄伯荣", "publisher": "高等教育出版社", "level": 2, "desc": "现代汉语经典"},
+                {"title": "《文学批评原理》", "author": "王先霈", "publisher": "华中师范大学出版社", "level": 3, "desc": "文学批评权威"},
+            ],
+            "papers": [
+                {"title": "Poetics", "authors": "Aristotle", "year": -350, "venue": "Ancient Greek", "level": 2, "desc": "西方文学理论奠基"},
+                {"title": "The Literature of the World", "authors": "Harold Bloom", "year": 2000, "venue": "HarperCollins", "level": 3, "desc": "世界文学经典"},
+            ]
+        },
+        "geography": {
+            "name": "地理学",
+            "videos": [
+                {"title": "自然地理学", "url": "https://www.icourse163.org/course/NJU-1002046001", "platform": "中国大学MOOC", "duration": "~30h", "level": 1},
+                {"title": "人文地理学", "url": "https://www.icourse163.org/course/XJTU-1002096001", "platform": "中国大学MOOC", "duration": "~25h", "level": 2},
+                {"title": "GIS基础", "url": "https://www.icourse163.org/course/WHU-1002076001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "经济地理学", "url": "https://www.icourse163.org/course/ZJU-1002066001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "区域地理学", "url": "https://www.icourse163.org/course/NJU-1002056001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "遥感概论", "url": "https://www.icourse163.org/course/WHU-1002086001", "platform": "中国大学MOOC", "duration": "~35h", "level": 3},
+                {"title": "GIS空间分析", "url": "https://www.icourse163.org/course/XJTU-1002036001", "platform": "中国大学MOOC", "duration": "~35h", "level": 3},
+            ],
+            "books": [
+                {"title": "《自然地理学》", "author": "伍光和", "publisher": "高等教育出版社", "level": 1, "desc": "自然地理学经典"},
+                {"title": "《人文地理学》", "author": "赵荣", "publisher": "高等教育出版社", "level": 2, "desc": "人文地理学权威"},
+                {"title": "《地理信息系统》", "author": "邬伦", "publisher": "科学出版社", "level": 2, "desc": "GIS基础"},
+                {"title": "《经济地理学》", "author": "李小建", "publisher": "高等教育出版社", "level": 2, "desc": "经济地理学经典"},
+                {"title": "《遥感导论》", "author": "梅安新", "publisher": "高等教育出版社", "level": 3, "desc": "遥感权威"},
+                {"title": "《GIS空间分析》", "author": "王劲峰", "publisher": "科学出版社", "level": 3, "desc": "空间分析经典"},
+            ],
+            "papers": [
+                {"title": "Geography and Politics", "authors": "Harold Mackinder", "year": 1904, "venue": "Geographical Journal", "level": 2, "desc": "地缘政治理论"},
+                {"title": "The Spatial Organization", "authors": "Walter Christaller", "year": 1933, "venue": "Gustav Fischer", "level": 3, "desc": "中心地理论"},
+            ]
+        },
+        "philosophy": {
+            "name": "哲学",
+            "videos": [
+                {"title": "哲学导论", "url": "https://www.icourse163.org/course/PKU-1002056001", "platform": "中国大学MOOC", "duration": "~25h", "level": 1},
+                {"title": "西方哲学史", "url": "https://www.icourse163.org/course/ZJU-1002016001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "中国哲学史", "url": "https://www.icourse163.org/course/BFSU-1002046001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "逻辑学", "url": "https://www.icourse163.org/course/NJU-1002026001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "伦理学", "url": "https://www.icourse163.org/course/ZJU-1002036001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "美学", "url": "https://www.icourse163.org/course/PKU-1002046001", "platform": "中国大学MOOC", "duration": "~30h", "level": 3},
+                {"title": "宗教学", "url": "https://www.icourse163.org/course/HZNU-1002056001", "platform": "中国大学MOOC", "duration": "~30h", "level": 3},
+            ],
+            "books": [
+                {"title": "《西方哲学史》", "author": "罗素", "publisher": "商务印书馆", "level": 1, "desc": "西方哲学史经典"},
+                {"title": "《中国哲学史》", "author": "冯友兰", "publisher": "华东师范大学出版社", "level": 2, "desc": "中国哲学史权威"},
+                {"title": "《存在与时间》", "author": "海德格尔", "publisher": "三联书店", "level": 3, "desc": "存在主义经典"},
+                {"title": "《逻辑学导论》", "author": "Irving Copi", "publisher": "中国人民大学出版社", "level": 2, "desc": "逻辑学权威"},
+                {"title": "《伦理学原理》", "author": "摩尔", "publisher": "商务印书馆", "level": 3, "desc": "伦理学经典"},
+                {"title": "《美学》", "author": "黑格尔", "publisher": "商务印书馆", "level": 3, "desc": "美学经典"},
+            ],
+            "papers": [
+                {"title": "The Republic", "authors": "Plato", "year": -380, "venue": "Ancient Greek", "level": 2, "desc": "西方哲学奠基"},
+                {"title": "Critique of Pure Reason", "authors": "Immanuel Kant", "year": 1781, "venue": "Hartknoch", "level": 3, "desc": "康德哲学经典"},
+            ]
+        },
+        "management": {
+            "name": "管理学",
+            "videos": [
+                {"title": "管理学原理", "url": "https://www.icourse163.org/course/HUST-1002626001", "platform": "中国大学MOOC", "duration": "~25h", "level": 1},
+                {"title": "MBA核心课程", "url": "https://www.coursera.org/specializations/business-administration", "platform": "Coursera", "duration": "~60h", "level": 2},
+                {"title": "组织行为学", "url": "https://www.icourse163.org/course/BJUT-1002582001", "platform": "中国大学MOOC", "duration": "~20h", "level": 2},
+                {"title": "市场营销学", "url": "https://www.icourse163.org/course/TJU-1002006001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "人力资源管理", "url": "https://www.icourse163.org/course/HUST-1002627001", "platform": "中国大学MOOC", "duration": "~30h", "level": 2},
+                {"title": "运营管理", "url": "https://www.icourse163.org/course/ZJU-1002076001", "platform": "中国大学MOOC", "duration": "~35h", "level": 3},
+                {"title": "供应链管理", "url": "https://www.icourse163.org/course/SZU-1002086001", "platform": "中国大学MOOC", "duration": "~35h", "level": 3},
+            ],
+            "books": [
+                {"title": "《管理学》", "author": "罗宾斯", "publisher": "中国人民大学出版社", "level": 1, "desc": "管理学经典"},
+                {"title": "《管理经济学》", "author": "彼得森", "publisher": "中国人民大学出版社", "level": 2, "desc": "管理经济学权威"},
+                {"title": "《战略管理》", "author": "迈克尔·波特", "publisher": "机械工业出版社", "level": 2, "desc": "战略管理经典"},
+                {"title": "《市场营销学》", "author": "菲利普·科特勒", "publisher": "中国人民大学出版社", "level": 2, "desc": "市场营销权威"},
+                {"title": "《人力资源管理》", "author": "加里·德斯勒", "publisher": "中国人民大学出版社", "level": 2, "desc": "HR管理经典"},
+                {"title": "《运营管理》", "author": "Chase", "publisher": "机械工业出版社", "level": 3, "desc": "运营管理权威"},
+            ],
+            "papers": [
+                {"title": "The Practice of Management", "authors": "Peter Drucker", "year": 1954, "venue": "HarperCollins", "level": 2, "desc": "管理学经典"},
+                {"title": "Competitive Strategy", "authors": "Michael Porter", "year": 1980, "venue": "Free Press", "level": 3, "desc": "竞争战略理论"},
+            ]
+        }
+    }
+
+    # 预设学科key到资源库key的映射（覆盖全部SUBJECTS中的学科）
+    SUBJECT_TO_RESOURCE = {
+        "computer_science": "computer_science",
+        "ai": "ai",
+        "data_science": "data_science",
+        "software_engineering": "computer_science",
+        "electronic": "computer_science",
+        "math": "math",
+        "english": "english",
+        "finance": "finance",
+        "law": "law",
+        "psychology": "psychology",
+        "education": "education",
+        "art_design": "art_design",
+        "physics": "physics",
+        "chemistry": "chemistry",
+        "biology": "biology",
+        "medicine": "medicine",
+        "engineering": "engineering",
+        "mechanical": "engineering",
+        "civil": "engineering",
+        "electrical": "engineering",
+        "materials": "engineering",
+        "environmental": "geography",
+        "geography": "geography",
+        "history": "history",
+        "philosophy": "philosophy",
+        "politics": "law",
+        "economics": "economics",
+        "management": "management",
+        "marketing": "management",
+        "accounting": "finance",
+        "statistics": "data_science",
+        "linguistics": "english",
+        "literature": "literature",
+        "music": "music",
+        "sports": "biology",
+        "agriculture": "biology",
+        "architecture": "architecture",
+        "design": "art_design",
+        "media": "art_design",
+        "journalism": "literature",
+        "public_health": "medicine",
+        "nursing": "medicine",
+        "pharmacy": "medicine",
+        "dentistry": "medicine",
+        "veterinary": "medicine",
+        "marine": "biology",
+        "atmospheric": "geography",
+        "geology": "geography",
+        "astronomy": "physics",
+        "optics": "physics",
+        "robotics": "ai",
+        "network": "computer_science",
+        "database": "computer_science",
+        "security": "computer_science",
+        "multimedia": "art_design",
+        "game": "art_design",
+        "animation": "art_design",
+        "film": "art_design",
+    }
+
+    def generate(self, context: dict) -> dict:
+        subject = context.get("subject", "computer_science")
+        subject_name = context.get("subject_name", subject)
+        level = context.get("level", 1)
+        topic = context.get("topic", subject_name)
+
+        # 使用精确映射匹配资源库
+        db_key = self._resolve_resource_db(subject)
+        db = self.RESOURCE_DB.get(db_key, self.RESOURCE_DB["computer_science"])
+
+        def filter_level(items, user_level):
+            if user_level == 1:
+                return [i for i in items if i["level"] == 1]
+            elif user_level == 2:
+                return [i for i in items if i["level"] == 2]
+            elif user_level == 3:
+                return [i for i in items if i["level"] in [2, 3]]
+            elif user_level == 4:
+                return [i for i in items if i["level"] == 3]
+            else:
+                return [i for i in items if i["level"] <= user_level]
+
+        videos = filter_level(db["videos"], level)
+        books = filter_level(db["books"], level)
+        papers = filter_level(db.get("papers", []), level)
+
+        # 兜底
+        if not videos:
+            videos = filter_level(self.RESOURCE_DB["computer_science"]["videos"], level)
+        if not books:
+            books = filter_level(self.RESOURCE_DB["computer_science"]["books"], level)
+
+        return {
+            "type": "multimedia",
+            "title": f"推荐资源 · {topic} · {db['name']}",
+            "format": "recommendation",
+            "generated_at": datetime.utcnow().isoformat(),
+            "videos": videos,
+            "books": books,
+            "papers": papers,
+            "metadata": {
+                "subject": subject,
+                "level": level,
+                "topic": topic,
+                "discipline": db["name"],
+                "total_items": len(videos) + len(books) + len(papers),
+            }
+        }
+
+    def _resolve_resource_db(self, subject: str) -> str:
+        """根据预设学科key精确匹配到资源库key，兜底走computer_science"""
+        subject_lower = subject.strip().lower()
+
+        # 1. 精确预设映射表
+        if subject_lower in self.SUBJECT_TO_RESOURCE:
+            return self.SUBJECT_TO_RESOURCE[subject_lower]
+
+        # 2. 关键词匹配（兼容自定义输入）
+        keyword_mapping = {
+            "ai": ["ai", "ml", "machine learning", "deep learning", "artificial intelligence", "神经网络", "机器学习", "深度学习", "强化学习"],
+            "python": ["python", "django", "flask", "fastapi"],
+            "web": ["web", "html", "css", "javascript", "react", "vue", "node", "frontend", "backend", "全栈"],
+            "data_science": ["data", "data analysis", "data science", "analytics", "统计分析", "数据", "pandas", "numpy", "sql"],
+            "english": ["english", "英语", "ielts", "toefl", "gre", "sat", "linguistics", "language"],
+            "math": ["math", "mathematics", "数学", "calculus", "algebra", "statistics", "linear algebra", "微积分", "线性代数", "概率论"],
+            "physics": ["physics", "物理", "mechanics", "力学", "electromagnetism", "电磁学", "thermodynamics", "量子"],
+            "computer_science": ["computer science", "计算机", "编程", "code", "software", "程序", "cs", "算法", "数据结构", "操作系统", "网络", "database", "security", "工程"],
+        }
+        for key, keywords in keyword_mapping.items():
+            if any(kw in subject_lower for kw in keywords):
+                return key
+
+        return "computer_science"
+
+    def find_resources(self, subject: str, level: int, topic: str = "") -> dict:
+        """外部直接查询资源（供其他模块调用）"""
+        return self.generate({"subject": subject, "level": level, "topic": topic or subject})
+
+
+# ===== Coordinator: 协调者智能体 =====
+class GeneratorCoordinator:
+    """
+    资源生成协调者
+    职责：
+    1. 理解学生的资源需求
+    2. 分解为具体任务，分发给各专业Agent（含TrapExamGenerator）
+    3. 整合各Agent的输出
+    4. 支持两种模式：按需单类型生成 / 全自动全套生成
+    """
+
+    def __init__(self):
+        self.agents = {
+            "document": DocAgent(),
+            "mindmap": MindMapAgent(),
+            "quiz": QuizAgent(),
+            "case": CaseAgent(),
+            "multimedia": ResourceRecommenderAgent(),
+            "trap_exam": TrapExamGenerator(),
+        }
+
+    def generate_all(self, context: dict) -> dict:
+        """生成全套资源（6种类型全部生成）"""
+        results = {}
+        errors = []
+
+        for agent_name, agent in self.agents.items():
+            try:
+                results[agent_name] = agent.generate(context)
+            except Exception as e:
+                errors.append({"agent": agent_name, "error": str(e)})
+
+        return {
+            "success": len(errors) == 0,
+            "resources": results,
+            "count": len(results),
+            "errors": errors,
+            "generated_at": datetime.utcnow().isoformat(),
+        }
+
+    def generate_type(self, resource_type: str, context: dict) -> dict:
+        """生成指定类型的资源"""
+        agent = self.agents.get(resource_type)
+        if not agent:
+            return {"success": False, "error": f"未知资源类型: {resource_type}"}
+
+        try:
+            result = agent.generate(context)
+            return {"success": True, "resource": result, "type": resource_type}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def parse_student_request(self, request_text: str) -> dict:
+        """解析学生需求，提取生成上下文"""
+        request_lower = request_text.lower()
+
+        context = {
+            "learning_goal": request_text,
+            "weak_points": [],
+            "topic": "",
+            "question_count": 6,
+        }
+
+        topic_keywords = ["关于", "学习", "想学", "需要", "帮我", "生成"]
+        for kw in topic_keywords:
+            if kw in request_text:
+                parts = request_text.split(kw, 1)
+                if len(parts) > 1:
+                    topic_hint = parts[1].strip()[:20]
+                    context["topic"] = topic_hint
+                    break
+
+        if not context["topic"]:
+            context["topic"] = request_text[:20]
+
+        import re
+        num_match = re.search(r'(\d+)\s*道', request_text)
+        if num_match:
+            context["question_count"] = min(20, int(num_match.group(1)))
+
+        weak_patterns = ["不会", "不懂", "薄弱", "差", "弱", "难"]
+        for wp in weak_patterns:
+            if wp in request_lower:
+                idx = request_lower.find(wp)
+                context["weak_points"].append(request_text[max(0, idx-10):idx+20].strip())
+
+        return context
+
+
+# ===== 克星题生成Agent =====
+class TrapExamGenerator(BaseGeneratorAgent):
+    """克星题生成Agent - 针对学生认知弱点生成陷阱题目"""
+    name = "trap_exam"
+    description = "生成针对认知弱点的克星题"
+
+    def generate(self, context: dict) -> dict:
+        weak_points = context.get("weak_points", [])
+        subject = context.get("subject", "computer_science")
+        subject_name = context.get("subject_name", subject)
+
+        if not weak_points:
+            weak_points = [
+                "基础概念理解不透彻",
+                "混淆相似概念",
+                "对抽象概念难以理解",
+                "缺乏实际应用经验",
+                "知识体系不完整"
+            ]
+
+        # ===== 个性化画像感知调整 =====
+        profile = context.get("student_profile", {})
+        if profile.get("has_profile"):
+            # 合并画像中的weak_points（中文描述），去重
+            dim_scores = profile.get("dimension_scores", {})
+            profile_weak_dims = profile.get("weak_points", [])
+            cognitive_style = profile.get("cognitive_style", "综合型")
+            
+            # 将画像中的低分维度转成中文弱点描述
+            for dim, score in dim_scores.items():
+                if score < 35 and dim not in profile_weak_dims:
+                    profile_weak_dims.append(dim)
+            
+            # 将维度名转为可读的中文弱点
+            dim_to_weakness = {
+                "application": "缺乏实际应用能力",
+                "understanding": "概念理解深度不够",
+                "analysis": "分析评价能力不足",
+                "creativity": "创新思维能力弱",
+                "knowledge": "基础知识不扎实",
+                "self_learning": "自主学习效率低",
+                "pace": "学习节奏把握不好",
+                "cognitive": "认知层次偏低"
+            }
+            for dim in profile_weak_dims:
+                desc = dim_to_weakness.get(dim, f"在{dim}方面需要加强")
+                if desc not in weak_points:
+                    weak_points.append(desc)
+
+        return {
+            "type": "trap_exam",
+            "title": f"【克星题】{subject_name}认知弱点专项训练",
+            "format": "json",
+            "generated_at": datetime.utcnow().isoformat(),
+            "questions": self._generate_trap_questions(subject_name, weak_points),
+            "metadata": {
+                "subject": subject,
+                "weak_points_count": len(weak_points),
+                "total_questions": min(5, len(weak_points)),
+                "profile_aware": profile.get("has_profile")
+            }
+        }
+
+    def _generate_trap_questions(self, subject_name, weak_points):
+        questions = []
+        count = min(5, len(weak_points))
+
+        for i in range(count):
+            weak_point = weak_points[i]
+            q = self._make_trap_question(subject_name, weak_point, i + 1)
+            questions.append(q)
+
+        return questions
+
+    def _make_trap_question(self, subject_name, weak_point, idx):
+        """生成单个陷阱题目（LLM优先）"""
+        try:
+            from utils import call_llm, call_llm_json
+            sys_prompt = "你是一个考试命题专家，擅长设计陷阱题来检测学生的认知盲区。"
+            user_prompt = (
+                f"学科：{subject_name}\n"
+                f"针对弱点：{weak_point}\n"
+                f"题目序号：{idx}/5\n\n"
+                "请设计一道高质量选择题（4个选项）：\n"
+                "1. 正确选项必须是该学科中的真实正确知识\n"
+                "2. 干扰选项要精准对应学生的常见误解（针对上述弱点）\n"
+                "3. 每一个干扰选项都要精心设计，让学生误以为是正确答案\n\n"
+                '输出JSON ONLY，不要```json包裹：\n'
+                '{"id": 1, "question": "题干", "options": ["A. 选项1", "B. 选项2", "C. 选项3", "D. 选项4"], "answer": 0, "trap_explanation": "陷阱说明"}'
+            )
+            parsed = call_llm_json(sys_prompt, user_prompt, agent_name='TrapExam')
+            if parsed:
+                return parsed
+        except Exception as e:
+            print(f"[TrapExam] LLM失败: {e}")
+
+        # --- 增强的回退陷阱题模板 ---
+        trap_templates = [
+            {"question": f"关于{subject_name}中的核心概念，以下哪项理解是最准确的？",
+             "options": [
+                 f"A. {subject_name}的核心概念建立在基本原理之上，需要通过系统学习逐步理解",
+                 f"B. 只要记住{subject_name}的公式和定义就足够了",
+                 f"C. {subject_name}中的概念都是独立存在的，彼此没有关联",
+                 f"D. {subject_name}的概念无需理解，直接用就行"
+             ], "answer": 0,
+             "trap_explanation": f"本题针对[{weak_point}]设计。错误选项B、C、D分别对应三种典型误解："
+                                f"只记不理解的机械学习、忽视概念间关联的碎片化思维、跳过理论直接实践的冒进倾向。"},
+            {"question": f"在{subject_name}的学习过程中，以下哪种做法最有效？",
+             "options": [
+                 f"A. 在理解基础概念后，通过实际项目和练习来巩固和应用",
+                 f"B. 只看视频教程，不动手实践",
+                 f"C. 只做题不总结归纳",
+                 f"D. 只学习不与他人讨论交流"
+             ], "answer": 0,
+             "trap_explanation": f"本题针对[{weak_point}]设计。A是最有效的学习方式——理论与实践结合。"
+                                f"B、C、D都是常见但低效的学习习惯。"},
+            {"question": f"当学习{subject_name}时遇到一个难以理解的概念，最佳策略是什么？",
+             "options": [
+                 f"A. 暂停当前内容，从不同角度查找资料、看示例、用类比理解",
+                 f"B. 直接跳过，认为不重要",
+                 f"C. 死记硬背定义",
+                 f"D. 放弃学习这个主题"
+             ], "answer": 0,
+             "trap_explanation": f"本题针对[{weak_point}]设计。A体现了主动学习和批判性思维，"
+                                f"是深度学习的关键能力。B、C、D都是常见的逃避策略。"},
+            {"question": f"以下哪项是对{subject_name}中理论与实践关系的正确理解？",
+             "options": [
+                 f"A. 理论指导实践，实践检验理论，二者相辅相成",
+                 f"B. 理论无用，只看实践",
+                 f"C. 实践浪费时间的，只学理论就好",
+                 f"D. 理论和实践是两条平行线，没有交集"
+             ], "answer": 0,
+             "trap_explanation": f"本题针对[{weak_point}]设计。理论与实践是相互促进的关系，"
+                                f"错误选项反映了非此即彼的二元思维局限。"},
+        ]
+
+        template = trap_templates[idx % len(trap_templates)]
+        return {"id": idx, **template}
+
+
+# ===== 对话式画像构建Agent =====
+class ProfileBuilderAgent:
+    """
+    对话式画像构建Agent
+    通过自然语言对话，自动抽取8维画像
+
+    对话流程：
+    1. 问候 + 自我介绍
+    2. 询问专业/学科信息
+    3. 询问学习目标
+    4. 分层递进提问（逐步深入了解各维度）
+    5. 生成完整画像
+    6. 支持增量更新
+    """
+
+    STAGES = [
+        "greeting",
+        "basic_info",
+        "knowledge_dim",
+        "cognitive_dim",
+        "practice_dim",
+        "learning_dim",
+        "summary",
+        "complete",
+    ]
+
+    def __init__(self):
+        self.stage_questions = {
+            "greeting": {
+                "question": "你好！我是智学领航的AI学习顾问 🤖\n\n很高兴为你服务！让我了解一下你的学习情况，为你定制个性化学习方案。\n\n请告诉我你的**专业或学习领域**是什么？",
+                "dimension": None, "field": "major"
+            },
+            "basic_info": {
+                "question": "太棒了！🌟\n\n你希望通过学习达到什么**目标**？\n\n比如：\n- 想通过考试/考证\n- 想提升工作技能\n- 想系统学习打基础\n- 想深入某个细分领域",
+                "dimension": None, "field": "goal"
+            },
+            "knowledge_dim": {
+                "question": "明白了！👍\n\n请用一句话描述你现在对该领域知识的**掌握程度**？\n\n比如：\n- ✅「完全零基础，什么都不会」\n- ✅「学过一些，但理解不深」\n- ✅「基础扎实，想深入学习」\n- ✅「已经有一定实践经验」\n- ✅「接近专业水平」",
+                "dimension": "knowledge", "field": "knowledge_level"
+            },
+            "cognitive_dim": {
+                "question": "很好的了解！💡\n\n在学习新知识时，你更喜欢哪种**学习方式**？\n\n- 先系统学理论，再动手实践\n- 直接动手做项目，遇到问题再查资料\n- 看视频/听课跟着学\n- 阅读文档和书籍自学\n- 和他人讨论交流学习",
+                "dimension": "cognitive_style", "field": "learning_style"
+            },
+            "practice_dim": {
+                "question": "了解！🎯\n\n你平时会**动手实践**吗？频率如何？\n\n- 每天都会实践\n- 每周有固定实践时间\n- 偶尔做做练习\n- 很少实践，主要是学习理论\n- 几乎不实践",
+                "dimension": "application", "field": "practice_freq"
+            },
+            "learning_dim": {
+                "question": "好的！📚\n\n你觉得自己最容易在哪些方面遇到**困难**？\n（可以选多个）\n\n- 概念理解困难\n- 记不住知识点\n- 不会应用到实际\n- 缺乏学习动力和规划\n- 遇到问题不知道如何解决\n- 学习效率低，容易分心",
+                "dimension": "weakness", "field": "difficulties"
+            },
+            "summary": {
+                "question": "非常感谢你的耐心回答！😊\n\n我已经对你的学习情况有了基本了解，现在为你生成**个性化学习画像**...",
+                "dimension": None, "field": "summary"
+            }
+        }
+
+    def get_question_for_stage(self, stage: str) -> dict:
+        if stage not in self.STAGES:
+            return {"stage": "complete", "question": "", "is_complete": True}
+        last_idx = len(self.STAGES) - 1
+        current_idx = self.STAGES.index(stage)
+        if current_idx >= last_idx:
+            return {"stage": "complete", "question": "", "is_complete": True}
+        stage_info = self.stage_questions.get(stage, {})
+        return {
+            "stage": stage,
+            "question": stage_info.get("question", ""),
+            "field": stage_info.get("field"),
+            "dimension": stage_info.get("dimension"),
+            "is_complete": False
+        }
+
+    def get_next_stage(self, current_stage: str) -> str:
+        try:
+            current_idx = self.STAGES.index(current_stage)
+        except ValueError:
+            return self.STAGES[0] if self.STAGES else "complete"
+        next_idx = current_idx + 1
+        if next_idx >= len(self.STAGES):
+            return "complete"
+        return self.STAGES[next_idx]
+
+    def analyze_profile(self, conversation: list) -> dict:
+        """根据对话历史分析生成8维画像（LLM驱动）"""
+        if not conversation:
+            return self._default_profile()
+        parts = []
+        for c in conversation:
+            parts.append("Q: " + c.get("question", ""))
+            parts.append("A: " + c.get("answer", ""))
+        dialog = "\n".join(parts)
+        try:
+            from utils import call_llm, call_llm_json
+            sys_prompt = "你是一名教育心理学专家，分析学生对话，输出8维学习画像JSON。"
+            user_prompt = (
+                f"以下是与一位学生的教育访谈记录，请分析其学习画像：\n\n{dialog[:2000]}\n\n"
+                "请从以下8个维度评分（0-100整数）：\n"
+                "1. knowledge（知识掌握度）\n"
+                "2. understanding（理解深度）\n"
+                "3. application（应用能力）\n"
+                "4. analysis（分析评价能力）\n"
+                "5. creativity（创新思维）\n"
+                "6. self_learning（自主学习力）\n"
+                "7. pace（学习节奏）\n"
+                "8. cognitive（认知层次）\n\n"
+                "同时给出：\n"
+                "- major: 学生的专业/领域\n"
+                "- goal: 学习目标\n"
+                "- cognitive_style: 认知风格（系统理论型/实践驱动型/视听学习型/阅读自学型/社交学习型/综合型）\n"
+                "- weak_points: 薄弱维度数组\n"
+                "- strong_points: 优势维度数组\n"
+                "- level: 综合水平等级（1-4整数）\n"
+                "- level_name: 等级名称\n\n"
+                "只输出JSON：{{\"dimension_scores\": {{...}}, \"major\": \"\", \"goal\": \"\", \"cognitive_style\": \"\", \"weak_points\": [], \"strong_points\": [], \"level\": int, \"level_name\": \"\"}}"
+            )
+            parsed = call_llm_json(sys_prompt, user_prompt, agent_name='ProfileBuilder')
+            if parsed and isinstance(parsed.get("dimension_scores"), dict):
+                returned = parsed
+                if not returned.get("level"):
+                    scores = returned["dimension_scores"].values()
+                    avg_score = sum(scores) / len(scores) if scores else 50
+                    if avg_score >= 85: returned["level"] = 4; returned["level_name"] = "大神"
+                    elif avg_score >= 65: returned["level"] = 3; returned["level_name"] = "高等"
+                    elif avg_score >= 40: returned["level"] = 2; returned["level_name"] = "中等"
+                    else: returned["level"] = 1; returned["level_name"] = "基础"
+                if not isinstance(returned.get("weak_points"), list): returned["weak_points"] = []
+                if not isinstance(returned.get("strong_points"), list): returned["strong_points"] = []
+                returned.setdefault("practice_freq", "")
+                returned.setdefault("difficulties", "")
+                return returned
+        except Exception as e:
+            print(f"[ProfileBuilder] LLM分析失败，使用规则引擎: {e}")
+        return self._rules_analyze(conversation)
+
+    def _default_profile(self):
+        return {
+            "level": 1, "level_name": "基础",
+            "dimension_scores": {k: 50 for k in ["knowledge","understanding","application","analysis","creativity","self_learning","pace","cognitive"]},
+            "major": "", "goal": "", "cognitive_style": "综合型",
+            "practice_freq": "", "difficulties": "",
+            "weak_points": [], "strong_points": [],
+        }
+
+    @staticmethod
+    def _rules_analyze(conversation):
+        """基于规则的画像分析（回退方案）"""
+        stages = ProfileBuilderAgent.STAGES
+        responses = {stages[i]: msg.get("answer", "") for i, msg in enumerate(conversation) if i < len(stages)}
+        
+        scores = {"knowledge": 50, "understanding": 50, "application": 50, "analysis": 50,
+                  "creativity": 50, "self_learning": 50, "pace": 50, "cognitive": 50}
+        
+        major = responses.get("greeting", "")
+        goal = responses.get("basic_info", "")
+        kd = responses.get("knowledge_dim", "")
+        cd = responses.get("cognitive_dim", "")
+        pd = responses.get("practice_dim", "")
+        ld = responses.get("learning_dim", "")
+        
+        # 知识掌握度
+        if "零基础" in kd or "不会" in kd or "完全" in kd or "小白" in kd:
+            scores["knowledge"] = 15
+        elif "学过一些" in kd or "了解一点" in kd or "不太深" in kd or "入门" in kd:
+            scores["knowledge"] = 40
+        elif "基础扎实" in kd or "掌握良好" in kd or "很好" in kd or "熟练" in kd:
+            scores["knowledge"] = 75
+        elif "精通" in kd or "专业水平" in kd or "深入" in kd or "专家" in kd:
+            scores["knowledge"] = 95
+        
+        # 认知风格 -> 理解深度和学习方式
+        if "阅读" in cd or "文档" in cd or "书籍" in cd or "论文" in cd or "源码" in cd:
+            scores["self_learning"] = 90
+            scores["analysis"] = 85
+            scores["knowledge"] += 15
+            scores["understanding"] += 10
+            cognitive_style = "阅读自学型"
+        elif "实践" in cd or "动手" in cd or "项目" in cd or "编程" in cd:
+            scores["application"] = 85
+            scores["creativity"] = 75
+            scores["analysis"] = 65
+            cognitive_style = "实践驱动型"
+        elif "视频" in cd or "听课" in cd or "看视频" in cd or "教程" in cd:
+            scores["understanding"] = 50
+            scores["self_learning"] = 35
+            scores["application"] = 30
+            cognitive_style = "视听学习型"
+        elif "讨论" in cd or "交流" in cd or "他人" in cd or "合作" in cd:
+            scores["analysis"] = 65
+            scores["creativity"] = 70
+            scores["application"] += 10
+            cognitive_style = "社交学习型"
+        elif "理论" in cd or "系统" in cd or "先学" in cd or "原理" in cd:
+            scores["understanding"] = 80
+            scores["analysis"] = 70
+            scores["self_learning"] = 65
+            cognitive_style = "系统理论型"
+        else:
+            cognitive_style = "综合型"
+        
+        # 实践频率 -> 应用能力
+        practice_freq = "未知"
+        if "每天" in pd or "经常" in pd or "持续" in pd:
+            scores["application"] = 90
+            scores["knowledge"] += 15
+            scores["understanding"] += 10
+            practice_freq = "高频"
+        elif "每周" in pd or "固定" in pd or "定期" in pd:
+            scores["application"] = 65
+            scores["knowledge"] += 5
+            practice_freq = "中高频"
+        elif "偶尔" in pd or "有时候" in pd:
+            scores["application"] = 40
+            practice_freq = "低频"
+        elif "很少" in pd or "几乎不" in pd or "从不" in pd:
+            scores["application"] = 15
+            scores["understanding"] -= 10
+            scores["creativity"] -= 10
+            practice_freq = "极少"
+        
+        # 困难分析 -> 薄弱点和学习节奏
+        weak_points = []
+        strong_points = []
+        
+        if "概念理解" in ld or "概念" in ld or "抽象" in ld:
+            scores["understanding"] -= 30
+            scores["cognitive"] -= 15
+            weak_points.append("understanding")
+        if "记不住" in ld or "记忆" in ld or "遗忘" in ld:
+            scores["knowledge"] -= 25
+            scores["self_learning"] -= 10
+            weak_points.append("knowledge")
+        if "不会应用" in ld or "应用" in ld or "使用" in ld:
+            scores["application"] -= 30
+            scores["creativity"] -= 15
+            weak_points.append("application")
+        if "动力" in ld or "规划" in ld or "坚持" in ld:
+            scores["self_learning"] -= 30
+            scores["pace"] -= 20
+            weak_points.append("self_learning")
+        if "问题" in ld or "解决" in ld or "调试" in ld:
+            scores["analysis"] -= 25
+            scores["application"] -= 15
+            weak_points.append("analysis")
+        if "效率" in ld or "分心" in ld or "拖延" in ld:
+            scores["pace"] -= 30
+            scores["self_learning"] -= 15
+            weak_points.append("pace")
+        if "焦虑" in ld or "压力" in ld:
+            scores["cognitive"] -= 20
+            scores["pace"] -= 10
+            weak_points.append("cognitive")
+        if "时间" in ld or "忙" in ld:
+            scores["pace"] -= 25
+            scores["self_learning"] -= 10
+            weak_points.append("pace")
+        
+        # 学习目标 -> 认知层次
+        if "考试" in goal or "考证" in goal or "通过" in goal:
+            scores["knowledge"] += 20
+            scores["pace"] += 25
+            scores["understanding"] += 15
+            scores["cognitive"] = scores["knowledge"] // 2 + scores["understanding"] // 3
+        elif "技能" in goal or "工作" in goal or "实战" in goal:
+            scores["application"] += 25
+            scores["analysis"] += 20
+            scores["creativity"] += 15
+            scores["pace"] += 15
+            scores["cognitive"] = scores["application"] // 2 + scores["analysis"] // 3 + 20
+        elif "基础" in goal or "入门" in goal or "系统学习" in goal:
+            scores["understanding"] += 20
+            scores["knowledge"] += 15
+            scores["pace"] += 10
+            scores["cognitive"] = scores["knowledge"] // 2 + scores["understanding"] // 3
+        elif "深入" in goal or "研究" in goal or "精通" in goal:
+            scores["analysis"] += 30
+            scores["creativity"] += 25
+            scores["understanding"] += 20
+            scores["pace"] += 20
+            scores["cognitive"] = scores["analysis"] // 2 + scores["creativity"] // 3 + 30
+        
+        # 零基础惩罚：如果知识掌握度很低，理解深度也应该相应降低
+        if scores["knowledge"] <= 30:
+            scores["understanding"] = min(scores["understanding"], scores["knowledge"] + 15)
+            scores["analysis"] = min(scores["analysis"], scores["knowledge"] + 10)
+            scores["creativity"] = min(scores["creativity"], scores["knowledge"] + 5)
+            scores["self_learning"] = min(scores["self_learning"], scores["knowledge"] + 10)
+        
+        # 精通奖励：如果知识掌握度很高，其他维度也应该相应提升
+        if scores["knowledge"] >= 80:
+            scores["understanding"] = max(scores["understanding"], 70)
+            scores["analysis"] = max(scores["analysis"], 65)
+            scores["creativity"] = max(scores["creativity"], 60)
+            scores["self_learning"] = max(scores["self_learning"], 70)
+        
+        # 确保分数在0-100范围内
+        for k in scores:
+            scores[k] = max(10, min(95, scores[k]))
+        
+        # 根据分数确定等级
+        avg_score = sum(scores.values()) / len(scores)
+        if avg_score >= 85:
+            level, level_name = 4, "大神"
+        elif avg_score >= 65:
+            level, level_name = 3, "高等"
+        elif avg_score >= 40:
+            level, level_name = 2, "中等"
+        else:
+            level, level_name = 1, "基础"
+        
+        # 确定优势维度
+        sorted_scores = sorted(scores.items(), key=lambda x: -x[1])
+        strong_points = [k for k, v in sorted_scores[:3] if v >= 60]
+        
+        return {
+            "level": level, "level_name": level_name,
+            "dimension_scores": scores,
+            "major": major, "goal": goal,
+            "cognitive_style": cognitive_style,
+            "practice_freq": practice_freq,
+            "difficulties": ld,
+            "weak_points": weak_points,
+            "strong_points": strong_points,
+        }
+
+
+# ===== 全局实例 =====
+trap_exam_generator = TrapExamGenerator()
+generator_coordinator = GeneratorCoordinator()
+profile_builder = ProfileBuilderAgent()
+doc_agent = DocAgent()
+quiz_agent = QuizAgent()
+case_agent = CaseAgent()
+multimedia_agent = ResourceRecommenderAgent()

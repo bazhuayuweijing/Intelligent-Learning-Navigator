@@ -1,0 +1,202 @@
+{
+  "started_at": "2026-07-14T15:11:56.367547",
+  "users": {
+    "u_lv1_practice_python": {
+      "profile": {
+        "level": 1,
+        "level_name": "基础",
+        "style": "实践驱动型",
+        "subject": "python",
+        "weak_points": [
+          "application",
+          "understanding"
+        ]
+      },
+      "total_api_calls": 38,
+      "errors": 0,
+      "error_detail": [],
+      "avg_response_ms": 33.2
+    },
+    "u_lv2_theory_algo": {
+      "profile": {
+        "level": 2,
+        "level_name": "中等",
+        "style": "系统理论型",
+        "subject": "computer_science",
+        "weak_points": [
+          "analysis"
+        ]
+      },
+      "total_api_calls": 38,
+      "errors": 0,
+      "error_detail": [],
+      "avg_response_ms": 30.4
+    },
+    "u_lv2_visual_ai": {
+      "profile": {
+        "level": 2,
+        "level_name": "中等",
+        "style": "视觉型",
+        "subject": "ai",
+        "weak_points": [
+          "creativity"
+        ]
+      },
+      "total_api_calls": 38,
+      "errors": 0,
+      "error_detail": [],
+      "avg_response_ms": 28.5
+    },
+    "u_lv3_reading_web": {
+      "profile": {
+        "level": 3,
+        "level_name": "高等",
+        "style": "阅读自学型",
+        "subject": "web",
+        "weak_points": [
+          "application",
+          "creativity"
+        ]
+      },
+      "total_api_calls": 38,
+      "errors": 0,
+      "error_detail": [],
+      "avg_response_ms": 28.7
+    },
+    "u_lv3_practice_math": {
+      "profile": {
+        "level": 3,
+        "level_name": "高等",
+        "style": "综合型",
+        "subject": "math",
+        "weak_points": [
+          "application"
+        ]
+      },
+      "total_api_calls": 38,
+      "errors": 0,
+      "error_detail": [],
+      "avg_response_ms": 30.6
+    },
+    "u_lv4_expert_data": {
+      "profile": {
+        "level": 4,
+        "level_name": "大神",
+        "style": "系统理论型",
+        "subject": "data_science",
+        "weak_points": [
+          "creativity"
+        ]
+      },
+      "total_api_calls": 38,
+      "errors": 0,
+      "error_detail": [],
+      "avg_response_ms": 28.5
+    },
+    "u_lv1_selfread_physics": {
+      "profile": {
+        "level": 1,
+        "level_name": "基础",
+        "style": "阅读自学型",
+        "subject": "physics",
+        "weak_points": [
+          "knowledge",
+          "understanding",
+          "application"
+        ]
+      },
+      "total_api_calls": 38,
+      "errors": 0,
+      "error_detail": [],
+      "avg_response_ms": 28.7
+    },
+    "u_lv2_visual_english": {
+      "profile": {
+        "level": 2,
+        "level_name": "中等",
+        "style": "视觉型",
+        "subject": "english",
+        "weak_points": [
+          "analysis"
+        ]
+      },
+      "total_api_calls": 38,
+      "errors": 0,
+      "error_detail": [],
+      "avg_response_ms": 30.3
+    }
+  },
+  "summary": {
+    "total_users": 8,
+    "total_api_calls": 304,
+    "success_count": 304,
+    "error_count": 0,
+    "slow_calls": [],
+    "5xx_count": 0,
+    "profile_aware_diff": [],
+    "endpoint_avg": {
+      "register": 373.4,
+      "login": 389.0,
+      "dashboard": 11.4,
+      "profile_start": 10.9,
+      "profile_chat_0": 13.5,
+      "profile_chat_1": 20.7,
+      "profile_chat_2": 11.9,
+      "profile_chat_3": 9.9,
+      "profile_chat_4": 9.7,
+      "profile_result": 7.3,
+      "assessment_questions": 6.6,
+      "generate_all": 15.8,
+      "generate_doc": 11.0,
+      "generate_quiz": 11.3,
+      "generate_mindmap": 10.1,
+      "trap_exam": 11.6,
+      "resources_list": 9.4,
+      "tutor_ask_0": 12.9,
+      "tutor_ask_1": 9.1,
+      "evaluate_submit": 21.6,
+      "evaluate_report": 7.0,
+      "plan_current": 7.4,
+      "behavior_log_study": 9.9,
+      "behavior_log_quiz": 9.6,
+      "behavior_log_review": 9.7,
+      "behavior_stats": 6.9,
+      "memory_temperature": 7.0,
+      "safety_check_sensitive": 8.8,
+      "safety_check_overpromise": 9.1,
+      "safety_check_normal": 8.8,
+      "feedback_summary": 7.1,
+      "user_stats": 7.7,
+      "page_dashboard": 10.4,
+      "page_profile": 7.0,
+      "page_resource-gen": 8.7,
+      "page_evaluate": 11.2,
+      "page_tutor": 10.8,
+      "page_trap_exam": 10.1
+    },
+    "slowest_endpoints": [
+      [
+        "login",
+        389.0
+      ],
+      [
+        "register",
+        373.4
+      ],
+      [
+        "evaluate_submit",
+        21.6
+      ],
+      [
+        "profile_chat_1",
+        20.7
+      ],
+      [
+        "generate_all",
+        15.8
+      ]
+    ]
+  },
+  "issues": [],
+  "finished_at": "2026-07-14T15:12:07.047880"
+}

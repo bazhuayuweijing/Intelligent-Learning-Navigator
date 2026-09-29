@@ -1,0 +1,15 @@
+Flask==3.0.0
+Flask-Login==0.6.3
+Flask-SQLAlchemy==3.1.1
+SQLAlchemy==2.0.23
+Flask-CORS==4.0.0
+requests==2.31.0
+python-dotenv==1.0.0
+werkzeug==3.0.1
+gunicorn==21.2.0
+
+# PDF导出
+fpdf2==2.7.9
+
+# 语音识别WebSocket
+websocket-client==1.9.0

@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>安全审核功能演示 - 智学领航</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 40px 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header { text-align: center; color: white; margin-bottom: 40px; }
+        .header h1 { font-size: 2.5rem; margin-bottom: 10px; text-shadow: 0 2px 10px rgba(0,0,0,0.2); }
+        .header p { font-size: 1.1rem; opacity: 0.9; }
+        .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 24px; }
+        .card { background: white; border-radius: 16px; padding: 32px; box-shadow: 0 10px 40px rgba(0,0,0,0.15); transition: transform 0.3s; }
+        .card:hover { transform: translateY(-4px); }
+        .card-icon { width: 56px; height: 56px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; margin-bottom: 20px; }
+        .card-icon.red { background: linear-gradient(135deg, #fee2e2, #fecaca); color: #dc2626; }
+        .card-icon.orange { background: linear-gradient(135deg, #ffedd5, #fed7aa); color: #ea580c; }
+        .card-icon.blue { background: linear-gradient(135deg, #dbeafe, #bfdbfe); color: #2563eb; }
+        .card-title { font-size: 1.4rem; font-weight: 700; color: #1f2937; margin-bottom: 8px; }
+        .card-subtitle { font-size: 0.9rem; color: #6b7280; margin-bottom: 20px; }
+        .section { margin-bottom: 20px; }
+        .section-title { font-size: 0.85rem; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+        .input-box { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px; font-size: 0.95rem; line-height: 1.6; color: #374151; }
+        .output-box { border-radius: 10px; padding: 16px; font-size: 0.95rem; line-height: 1.6; }
+        .output-box.reject { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+        .output-box.warning { background: #fffbeb; border: 1px solid #fed7aa; color: #92400e; }
+        .output-box.low { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; }
+        .tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+        .tag { padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; }
+        .tag.reject { background: #fee2e2; color: #dc2626; }
+        .tag.warning { background: #ffedd5; color: #ea580c; }
+        .tag.low { background: #dbeafe; color: #2563eb; }
+        .tag.pass { background: #dcfce7; color: #16a34a; }
+        .footer { text-align: center; color: white; margin-top: 40px; opacity: 0.8; font-size: 0.9rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🛡️ 安全审核功能演示</h1>
+            <p>SafetyFilter - 内容安全过滤与防幻觉审核</p>
+        </div>
+
+        <div class="cards">
+            <!-- 场景1：敏感词拦截 -->
+            <div class="card">
+                <div class="card-icon red">🔴</div>
+                <div class="card-title">敏感词拦截</div>
+                <div class="card-subtitle">检测并拦截违法违规、学术不端等敏感内容</div>
+                
+                <div class="section">
+                    <div class="section-title">用户输入</div>
+                    <div class="input-box">考试时如何作弊不被发现</div>
+                </div>
+                
+                <div class="section">
+                    <div class="section-title">审核结果</div>
+                    <div class="output-box reject">
+                        <strong>🚫 拦截！内容包含敏感词</strong>
+                        <div style="margin-top: 8px; font-weight: normal;">
+                            检测到「学术不端行为」类型敏感词：<strong>作弊</strong>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="section">
+                    <div class="section-title">净化输出</div>
+                    <div class="output-box reject">考试时如何<span style="background:#fee2e2;color:#dc2626;padding:2px 6px;border-radius:4px;">[内容已过滤]</span>不被发现</div>
+                </div>
+
+                <div class="tags">
+                    <span class="tag reject">风险等级: reject</span>
+                    <span class="tag" style="background:#fee2e2;color:#dc2626;">通过: 否</span>
+                </div>
+            </div>
+
+            <!-- 场景2：过度承诺弱化处理 -->
+            <div class="card">
+                <div class="card-icon orange">🟠</div>
+                <div class="card-title">过度承诺弱化处理</div>
+                <div class="card-subtitle">检测并弱化绝对化表述，防止夸大宣传</div>
+                
+                <div class="section">
+                    <div class="section-title">LLM原始输出</div>
+                    <div class="input-box">保证学会这个算法就能100%通过考试，肯定没问题</div>
+                </div>
+                
+                <div class="section">
+                    <div class="section-title">审核结果</div>
+                    <div class="output-box warning">
+                        <strong>⚠️ 警告：检测到过度承诺</strong>
+                        <div style="margin-top: 8px; font-weight: normal;">
+                            检测到3处绝对化表述：<strong>保证学会</strong>、<strong>100%</strong>、<strong>肯定</strong>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="section">
+                    <div class="section-title">弱化处理后</div>
+                    <div class="output-box warning">建议学习这个算法就能较高通过考试，可能问题</div>
+                </div>
+
+                <div class="tags">
+                    <span class="tag warning">风险等级: warning</span>
+                    <span class="tag pass">通过: 是</span>
+                </div>
+            </div>
+
+            <!-- 场景3：虚假学术引用标记 -->
+            <div class="card">
+                <div class="card-icon blue">🔵</div>
+                <div class="card-title">虚假学术引用标记</div>
+                <div class="card-subtitle">检测含糊或可疑的学术引用，防止AI幻觉</div>
+                
+                <div class="section">
+                    <div class="section-title">LLM原始输出</div>
+                    <div class="input-box">引用一篇论文2021年的研究报告显示，这种方法效果显著</div>
+                </div>
+                
+                <div class="section">
+                    <div class="section-title">审核结果</div>
+                    <div class="output-box warning">
+                        <strong>⚠️ 警告：潜在幻觉风险</strong>
+                        <div style="margin-top: 8px; font-weight: normal;">
+                            模糊引用的学术来源：<strong>引用一篇论文2021...</strong>
+                            <br>缺少作者信息，可能为AI生成的虚假引用
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="section">
+                    <div class="section-title">处理建议</div>
+                    <div class="output-box low">建议提供具体作者和来源信息，如：引用Zhang等人2021年发表在NeurIPS上的论文</div>
+                </div>
+
+                <div class="tags">
+                    <span class="tag warning">风险等级: warning</span>
+                    <span class="tag pass">通过: 是</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>智学领航 · 让学习更高效</p>
+            <p style="font-size: 0.8rem; margin-top: 8px;">安全审核测试脚本: demos/safety/test_safety.py</p>
+        </div>
+    </div>
+</body>
+</html>
